@@ -10,7 +10,7 @@ mod tests {
     for i in 0..(capacity + 3) {
       buffer.push(Event {
         ts: 1755082651423,
-        level: i as u8,
+        level: i.to_string(),
         message: format!("Event number {}", i),
       });
     }
@@ -19,7 +19,7 @@ mod tests {
     println!("{:#?}", items);
 
     assert_eq!(items.len(), capacity);
-    assert_eq!(items.first().unwrap().level, 3);
-    assert_eq!(items.last().unwrap().level, 12);
+    assert_eq!(items.first().unwrap().level, 3.to_string());
+    assert_eq!(items.last().unwrap().level, 12.to_string());
   }
 }

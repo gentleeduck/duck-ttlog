@@ -4,12 +4,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
   pub ts: u64,
-  pub level: u8,
+  pub level: String,
   pub message: String,
 }
 
 impl Event {
-  pub fn new(ts: u64, level: u8, message: String) -> Self {
+  pub fn new(ts: u64, level: String, message: String) -> Self {
     Self { ts, level, message }
   }
 

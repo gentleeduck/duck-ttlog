@@ -2,36 +2,30 @@ mod __test__;
 
 use serde::Serialize;
 
+use std::collections::VecDeque;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct TTlogBuffer<T: Clone> {
-  pub buffer: Vec<Option<T>>,
-  pub capacity: usize,
-  pub head: usize,
+  data: VecDeque<T>,
+  capacity: usize,
 }
 
 impl<T: Clone> TTlogBuffer<T> {
   pub fn new(capacity: usize) -> Self {
     Self {
-      buffer: vec![None; capacity],
+      data: VecDeque::with_capacity(capacity),
       capacity,
-      head: 0,
     }
   }
 
-  pub fn push(&mut self, event: T) {
-    if self.head == self.capacity - 1 {
-      self.head = 0;
-    } else if self.head < self.capacity - 1 {
-      self.head += 1;
+  pub fn push(&mut self, item: T) {
+    if self.data.len() == self.capacity {
+      self.data.pop_front();
     }
-
-    self.buffer[self.head] = Some(event);
+    self.data.push_back(item);
   }
 
   pub fn iter(&self) -> impl Iterator<Item = &T> {
-    (0..self.capacity).map(move |i| {
-      let idx = (self.head + i + 1) % self.capacity;
-      self.buffer[idx].as_ref().unwrap()
-    })
+    self.data.iter()
   }
 }
