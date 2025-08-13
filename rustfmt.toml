@@ -1,0 +1,8 @@
+hard_tabs = false
+tab_spaces = 2
+max_width = 100
+reorder_imports = true
+match_block_trailing_comma = true
+match_arm_leading_pipes = "Preserve"
+edition = "2021"
+
