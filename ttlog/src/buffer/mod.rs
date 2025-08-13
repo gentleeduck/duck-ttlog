@@ -5,12 +5,12 @@ use serde::Serialize;
 use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Serialize)]
-pub struct TTlogBuffer<T: Clone> {
+pub struct RingBuffer<T: Clone> {
   data: VecDeque<T>,
   capacity: usize,
 }
 
-impl<T: Clone> TTlogBuffer<T> {
+impl<T: Clone> RingBuffer<T> {
   pub fn new(capacity: usize) -> Self {
     Self {
       data: VecDeque::with_capacity(capacity),

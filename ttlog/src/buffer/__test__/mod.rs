@@ -1,15 +1,15 @@
 #[cfg(test)]
 mod tests {
-  use crate::{buffer::TTlogBuffer, event::Event};
+  use crate::{buffer::RingBuffer, event::Event};
 
   #[test]
   fn test_push_and_iter() {
     let capacity = 10;
-    let mut buffer = TTlogBuffer::new(capacity);
+    let mut buffer = RingBuffer::new(capacity);
 
     for i in 0..(capacity + 3) {
       buffer.push(Event {
-        ts: 1755082651423,
+        timestamps: 1755082651423,
         level: i.to_string(),
         message: format!("Event number {}", i),
       });

@@ -1,16 +1,13 @@
-use tracing::{info, warn};
-use ttlog::init;
+use tracing::info;
+use ttlog::trace::Trace;
 
 fn main() {
-  let buffer = init(10);
+  let trace = Trace::init(5); // buffer size
 
-  info!("App started");
-  warn!("Low disk space");
-  info!("Shutting down");
+  info!("First log message");
+  info!("Second log message");
+  info!("Third log message");
 
-  println!("--- Buffer contents ---");
-  let buf = buffer.lock().unwrap();
-  for ev in buf.iter() {
-    println!("{:?}", ev);
-  }
+  println!("--- Buffer Contents ---");
+  trace.print_logs();
 }
