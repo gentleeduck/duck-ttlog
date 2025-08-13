@@ -60,9 +60,9 @@ mod tests {
     assert_eq!(buf.iter().collect::<Vec<_>>().len(), capacity);
 
     // Optional: print first 5 events to verify
-    for event in buf.iter().take(5) {
-      println!("{:?}", event);
-    }
+    // for event in buf.iter().take(5) {
+    //   println!("{:?}", event);
+    // }
   }
 
   #[test]

@@ -16,7 +16,6 @@ mod tests {
     }
 
     let items: Vec<_> = buffer.iter().collect();
-    println!("{:#?}", items);
 
     assert_eq!(items.len(), capacity);
     assert_eq!(items.first().unwrap().level, 3.to_string());

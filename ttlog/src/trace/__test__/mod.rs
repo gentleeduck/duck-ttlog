@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
-  use crate::{buffer::RingBuffer, trace::Trace, trace_layer::BufferLayer};
+  use crate::{buffer::RingBuffer, event::Event, trace::Trace, trace_layer::BufferLayer};
 
-  use std::sync::{Arc, Mutex};
+  use std::{
+    fs,
+    sync::{Arc, Mutex},
+  };
   use tracing::{info, subscriber::with_default};
   use tracing_subscriber::{layer::SubscriberExt, Registry};
 
@@ -63,18 +66,44 @@ mod tests {
   }
 
   #[test]
-  fn trace_print_logs() {
-    let trace = init_local_trace(2);
+  fn test_flush_snapshot_creates_file() {
+    // 1. Create a buffer and populate it with dummy events
+    let buffer = Arc::new(Mutex::new(RingBuffer::<Event>::new(10)));
 
-    with_default(
-      Registry::default().with(BufferLayer::new(trace.buffer.clone())),
-      || {
-        info!("Hello");
-        info!("World");
-      },
-    );
+    {
+      let mut buf_lock = buffer.lock().unwrap();
+      // Add some dummy events
+      buf_lock.push(Event::new(
+        12345,
+        "event1".to_string(),
+        "message1".to_string(),
+      ));
+      buf_lock.push(Event::new(
+        12345,
+        "event2".to_string(),
+        "message2".to_string(),
+      ));
+    }
 
-    // Ensure print_logs runs without panic
-    trace.print_logs();
+    // 2. Call flush_snapshot
+    Trace::flush_snapshot(buffer.clone(), "test");
+
+    // 3. Check /tmp for a file that starts with "ttlog-<pid>-<timestamp>-test"
+    let pid = std::process::id().to_string();
+    let files: Vec<_> = fs::read_dir("/tmp")
+      .unwrap()
+      .filter_map(|e| e.ok())
+      .filter(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        name.contains(&pid) && name.contains("test") && name.ends_with(".bin")
+      })
+      .collect();
+
+    assert!(!files.is_empty(), "Snapshot file should exist in /tmp");
+
+    // Optional: remove created files after test
+    for f in files {
+      let _ = fs::remove_file(f.path());
+    }
   }
 }
