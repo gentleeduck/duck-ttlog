@@ -1,10 +1,10 @@
 mod __test__;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::collections::VecDeque;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RingBuffer<T: Clone> {
   data: VecDeque<T>,
   capacity: usize,
