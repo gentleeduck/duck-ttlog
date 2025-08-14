@@ -3,7 +3,7 @@ use std::error::Error;
 use colored::*;
 use figlet_rs::FIGfont;
 
-use crate::snapshot_read::SnapShot;
+use crate::snapshot_read::SnapshotFile;
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
 
@@ -24,45 +24,40 @@ pub fn format_timestamp(ts_str: &str) -> String {
   )
 }
 
-pub fn print_snapshots(snapshots: &[SnapShot]) {
+pub fn print_snapshots(snapshots: &[SnapshotFile]) {
   if snapshots.is_empty() {
     println!("{}", "No snapshots to display.".red());
     return;
   }
 
-  // Collect all lines for width calculation
-  let mut all_lines: Vec<String> = Vec::new();
   for snap in snapshots {
+    print_snapshot(snap);
+  }
+}
+fn print_snapshot(snap: &SnapshotFile) {
+  // Calculate max width for borders
+  let mut all_lines: Vec<String> = Vec::new();
+  all_lines.push(format!(
+    "📦 {} ({})",
+    snap.name,
+    format_timestamp(&snap.create_at)
+  ));
+  all_lines.push(format!("📄 {}", snap.path));
+  for event in &snap.data.events {
     all_lines.push(format!(
-      "📦 {} ({})",
-      snap.name,
-      format_timestamp(&snap.create_at)
+      "{} [{}] {}",
+      icon_for_level(&event.level),
+      event.level,
+      event.message
     ));
-    all_lines.push(format!("📄 {}", snap.path));
-    for event in &snap.data {
-      all_lines.push(format!(
-        "{} [{}] {}",
-        icon_for_level(&event.level),
-        event.level,
-        event.message
-      ));
-    }
   }
 
-  // Strip ANSI for accurate width measurement
   let max_width = all_lines
     .iter()
     .map(|l| strip_ansi_codes(l).chars().count())
     .max()
     .unwrap_or(0);
 
-  // Print each snapshot
-  for snap in snapshots {
-    print_snapshot(snap, max_width);
-  }
-}
-
-fn print_snapshot(snap: &SnapShot, max_width: usize) {
   // Top border
   println!(
     "{}",
@@ -75,10 +70,10 @@ fn print_snapshot(snap: &SnapShot, max_width: usize) {
     snap.name.bright_white().bold(),
     format_timestamp(&snap.create_at).dimmed()
   );
-  println!("{}", bordered_line(&header, max_width - 1));
+  println!("{}", bordered_line(&header, max_width));
 
   let path_line = format!("📄 {}", snap.path.dimmed());
-  println!("{}", bordered_line(&path_line, max_width - 1));
+  println!("{}", bordered_line(&path_line, max_width));
 
   // Separator
   println!(
@@ -87,7 +82,7 @@ fn print_snapshot(snap: &SnapShot, max_width: usize) {
   );
 
   // Events
-  for event in &snap.data {
+  for event in &snap.data.events {
     let icon = icon_for_level(&event.level);
     let level_colored = match event.level.as_str() {
       "INFO" => event.level.bright_blue().bold(),
@@ -95,7 +90,6 @@ fn print_snapshot(snap: &SnapShot, max_width: usize) {
       "ERROR" => event.level.bright_red().bold(),
       _ => event.level.bright_white().bold(),
     };
-
     let line = format!("{} [{}] {}", icon, level_colored, event.message);
     println!("{}", bordered_line(&line, max_width));
   }

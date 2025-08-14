@@ -1,7 +1,7 @@
 mod snapshot_read;
 mod utils;
 
-use crate::snapshot_read::SnapShot;
+use crate::snapshot_read::SnapshotFile;
 use crate::utils::{generate_ascii_art, print_snapshots};
 use colored::*;
 use inquire::Select;
@@ -65,7 +65,7 @@ fn show_all_files_menu() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
-fn file_action_menu(file: &str, snapshots: &Vec<SnapShot>) -> Result<(), Box<dyn Error>> {
+fn file_action_menu(file: &str, snapshots: &Vec<SnapshotFile>) -> Result<(), Box<dyn Error>> {
   loop {
     match Select::new(
       &format!("File: {} - Choose an action:", file),
@@ -86,7 +86,7 @@ fn file_action_menu(file: &str, snapshots: &Vec<SnapShot>) -> Result<(), Box<dyn
   Ok(())
 }
 
-fn preview_file(file: &str, snapshots: &Vec<SnapShot>) -> Result<(), Box<dyn Error>> {
+fn preview_file(file: &str, snapshots: &Vec<SnapshotFile>) -> Result<(), Box<dyn Error>> {
   // Find snapshot by path
   if let Some(snapshot) = snapshots.iter().find(|s| s.name == file) {
     println!("=== Preview: {} ===", snapshot.name);
