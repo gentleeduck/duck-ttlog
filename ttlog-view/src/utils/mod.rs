@@ -25,37 +25,113 @@ pub fn format_timestamp(ts_str: &str) -> String {
 }
 
 pub fn print_snapshots(snapshots: &[SnapShot]) {
-  for snap in snapshots {
-    println!(
-      "{} {} {}",
-      "📦".bright_yellow(),
-      snap.name.bright_white().bold(),
-      format!("({})", format_timestamp(&snap.create_at)).dimmed()
-    );
-    println!("    {} {}", "📄".bright_cyan(), snap.path.dimmed());
-
-    for event in &snap.data {
-      let icon = match event.level.as_str() {
-        "INFO" => "ℹ️".bright_blue(),
-        "WARN" => "⚠️".bright_yellow(),
-        "ERROR" => "❌".bright_red(),
-        _ => "•".bright_white(),
-      };
-
-      println!(
-        "    {} [{}] {}",
-        icon,
-        event.level.color(match event.level.as_str() {
-          "INFO" => "blue",
-          "WARN" => "yellow",
-          "ERROR" => "red",
-          _ => "white",
-        }),
-        event.message
-      );
-    }
-    println!();
+  if snapshots.is_empty() {
+    println!("{}", "No snapshots to display.".red());
+    return;
   }
+
+  // Collect all lines for width calculation
+  let mut all_lines: Vec<String> = Vec::new();
+  for snap in snapshots {
+    all_lines.push(format!(
+      "📦 {} ({})",
+      snap.name,
+      format_timestamp(&snap.create_at)
+    ));
+    all_lines.push(format!("📄 {}", snap.path));
+    for event in &snap.data {
+      all_lines.push(format!(
+        "{} [{}] {}",
+        icon_for_level(&event.level),
+        event.level,
+        event.message
+      ));
+    }
+  }
+
+  // Strip ANSI for accurate width measurement
+  let max_width = all_lines
+    .iter()
+    .map(|l| strip_ansi_codes(l).chars().count())
+    .max()
+    .unwrap_or(0);
+
+  // Print each snapshot
+  for snap in snapshots {
+    print_snapshot(snap, max_width);
+  }
+}
+
+fn print_snapshot(snap: &SnapShot, max_width: usize) {
+  // Top border
+  println!(
+    "{}",
+    format!("╔{}╗", "═".repeat(max_width + 3)).bright_black()
+  );
+
+  // Header
+  let header = format!(
+    "📦 {} ({})",
+    snap.name.bright_white().bold(),
+    format_timestamp(&snap.create_at).dimmed()
+  );
+  println!("{}", bordered_line(&header, max_width - 1));
+
+  let path_line = format!("📄 {}", snap.path.dimmed());
+  println!("{}", bordered_line(&path_line, max_width - 1));
+
+  // Separator
+  println!(
+    "{}",
+    format!("╠{}╣", "═".repeat(max_width + 3)).bright_black()
+  );
+
+  // Events
+  for event in &snap.data {
+    let icon = icon_for_level(&event.level);
+    let level_colored = match event.level.as_str() {
+      "INFO" => event.level.bright_blue().bold(),
+      "WARN" => event.level.bright_yellow().bold(),
+      "ERROR" => event.level.bright_red().bold(),
+      _ => event.level.bright_white().bold(),
+    };
+
+    let line = format!("{} [{}] {}", icon, level_colored, event.message);
+    println!("{}", bordered_line(&line, max_width));
+  }
+
+  // Bottom border
+  println!(
+    "{}",
+    format!("╚{}╝", "═".repeat(max_width + 3)).bright_black()
+  );
+  println!();
+}
+
+fn bordered_line(content: &str, max_width: usize) -> String {
+  let stripped_len = strip_ansi_codes(content).chars().count() - 1;
+  format!(
+    "{} {}{} {}",
+    "║".bright_black(),
+    content,
+    " ".repeat(max_width - stripped_len),
+    "║".bright_black()
+  )
+}
+
+fn icon_for_level(level: &str) -> colored::ColoredString {
+  match level {
+    "INFO" => "ℹ️".bright_blue(),
+    "WARN" => "⚠️".bright_yellow(),
+    "ERROR" => "❌".bright_red(),
+    _ => "•".bright_white(),
+  }
+}
+
+/// Remove ANSI color codes for correct length measurement
+fn strip_ansi_codes(s: &str) -> String {
+  let re = regex::Regex::new(r"\x1b\[[0-9;]*m").unwrap();
+  re.replace_all(s, "").to_string()
 }
 
 pub fn generate_ascii_art(text: &str) -> Result<String, Box<dyn Error>> {
