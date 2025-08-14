@@ -1,4 +1,7 @@
+mod __test__;
+
 use crate::{event::Event, trace::Message};
+
 use chrono::Utc;
 use crossbeam_channel::{Sender, TrySendError};
 use tracing::field::Visit;

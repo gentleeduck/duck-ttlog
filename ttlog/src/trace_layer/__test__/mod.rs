@@ -1,82 +1,65 @@
 #[cfg(test)]
 mod tests {
-  use crate::buffer::RingBuffer;
+  use crate::trace::Message;
   use crate::trace_layer::BufferLayer;
-
-  use std::sync::{Arc, Mutex};
-  use tracing::{info, Dispatch};
-  use tracing_subscriber::layer::SubscriberExt;
-  use tracing_subscriber::Registry;
+  use crossbeam_channel::bounded;
+  use tracing::{error, info, warn};
+  use tracing_subscriber::{layer::SubscriberExt, Registry};
 
   #[test]
-  fn single_event_pushes_to_buffer() {
-    let buffer = Arc::new(Mutex::new(RingBuffer::new(10)));
-    let layer = BufferLayer::new(buffer.clone());
+  fn test_buffer_layer_new() {
+    let (sender, _receiver) = bounded::<Message>(10);
+    let layer = BufferLayer::new(sender);
 
-    let subscriber = Registry::default().with(layer);
-    tracing::subscriber::with_default(subscriber, || {
-      info!("Hello world");
-    });
-
-    let buf = buffer.lock().unwrap();
-    assert_eq!(buf.iter().collect::<Vec<_>>().len(), 1);
-    assert_eq!(buf.iter().next().unwrap().message, "Hello world");
+    assert!(std::format!("{:?}", layer).contains("BufferLayer"));
   }
 
   #[test]
-  fn concurrent_logging() {
-    use std::sync::Arc;
-    use std::thread;
-    use tracing::{dispatcher, info};
-    use tracing_subscriber::{layer::SubscriberExt, Registry};
+  fn test_buffer_layer_clone() {
+    let (sender, _receiver) = bounded::<Message>(10);
+    let layer = BufferLayer::new(sender);
 
-    let capacity = 1000;
-    let buffer = Arc::new(Mutex::new(RingBuffer::new(capacity)));
-    let layer = BufferLayer::new(buffer.clone());
+    let cloned = layer.clone();
 
-    // Wrap subscriber in Arc so threads can share it
-    let subscriber = Arc::new(Registry::default().with(layer));
+    // Both should have the same sender
+    assert!(std::format!("{:?}", layer).contains("BufferLayer"));
+    assert!(std::format!("{:?}", cloned).contains("BufferLayer"));
+  }
 
-    let threads: Vec<_> = (0..10)
-      .map(|t| {
-        let disp = Dispatch::from(subscriber.clone());
-        thread::spawn(move || {
-          // Each thread sets the subscriber locally
-          dispatcher::with_default(&disp, || {
-            for i in 0..500 {
-              info!("Thread {} - {}", t, i);
-            }
-          });
-        })
-      })
-      .collect();
+  #[test]
+  fn test_buffer_layer_with_tracing_events() {
+    let (sender, receiver) = bounded::<Message>(100);
+    let layer = BufferLayer::new(sender);
 
-    for t in threads {
-      t.join().unwrap();
+    // Create subscriber with our layer
+    let subscriber = Registry::default().with(layer);
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    // Emit tracing events
+    info!("Test info message");
+    warn!("Test warning message");
+    error!("Test error message");
+
+    // Check that events were captured
+    let mut events = Vec::new();
+    while let Ok(msg) = receiver.try_recv() {
+      match msg {
+        Message::Event(event) => events.push(event),
+        _ => {},
+      }
     }
 
-    // Lock buffer and check results
-    let buf = buffer.lock().unwrap();
-    assert_eq!(buf.iter().collect::<Vec<_>>().len(), capacity);
+    // Should have captured 3 events
+    assert_eq!(events.len(), 3);
 
-    // Optional: print first 5 events to verify
-    // for event in buf.iter().take(5) {
-    //   println!("{:?}", event);
-    // }
-  }
+    // Check event details
+    let info_event = events.iter().find(|e| e.level == "INFO").unwrap();
+    assert_eq!(info_event.message, "Test info message");
 
-  #[test]
-  fn empty_message_logged() {
-    let buffer = Arc::new(Mutex::new(RingBuffer::new(5)));
-    let layer = BufferLayer::new(buffer.clone());
+    let warn_event = events.iter().find(|e| e.level == "WARN").unwrap();
+    assert_eq!(warn_event.message, "Test warning message");
 
-    let subscriber = Registry::default().with(layer);
-    tracing::subscriber::with_default(subscriber, || {
-      info!("");
-    });
-
-    let buf = buffer.lock().unwrap();
-    assert_eq!(buf.iter().collect::<Vec<_>>().len(), 1);
-    assert_eq!(buf.iter().next().unwrap().message, "");
+    let error_event = events.iter().find(|e| e.level == "ERROR").unwrap();
+    assert_eq!(error_event.message, "Test error message");
   }
 }

@@ -12,6 +12,7 @@ use crate::trace_layer::BufferLayer;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
 
+#[derive(Debug, Clone)]
 pub struct Trace {
   sender: Sender<Message>,
 }
@@ -21,6 +22,16 @@ pub enum Message {
   Event(Event),
   SnapshotImmediate(String), // reason
   FlushAndExit,              // optional: for graceful shutdown in tests
+}
+
+impl std::fmt::Display for Message {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Message::Event(ev) => write!(f, "Event: {}", ev),
+      Message::SnapshotImmediate(reason) => write!(f, "SnapshotImmediate: {}", reason),
+      Message::FlushAndExit => write!(f, "FlushAndExit"),
+    }
+  }
 }
 
 impl Trace {
@@ -40,8 +51,13 @@ impl Trace {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::trace::{Trace, Message};
+  /// use ttlog::event::Event;
+  ///
   /// let trace_system = Trace::init(1024, 128);
-  /// trace_system.sender.send(Message::new("test")).unwrap();
+  /// let event = Event::new(1234567890, "INFO".to_string(), "test message".to_string(), "test_target".to_string());
+  /// let sender = trace_system.get_sender();
+  /// sender.send(Message::Event(event)).unwrap();
   /// ```
   pub fn init(capacity: usize, channel_capacity: usize) -> Self {
     let (sender, receiver) = bounded::<Message>(channel_capacity);
@@ -64,8 +80,13 @@ impl Trace {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::trace::{Trace, Message};
+  /// use ttlog::event::Event;
+  ///
+  /// let trace_system = Trace::init(1024, 128);
+  /// let event = Event::new(1234567890, "INFO".to_string(), "test message".to_string(), "test_target".to_string());
   /// let sender = trace_system.get_sender();
-  /// sender.send(Message::Event(my_event)).unwrap();
+  /// sender.send(Message::Event(event)).unwrap();
   /// ```
   pub fn get_sender(&self) -> Sender<Message> {
     self.sender.clone()
@@ -83,6 +104,9 @@ impl Trace {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::trace::Trace;
+  ///
+  /// let trace_system = Trace::init(1024, 128);
   /// trace_system.request_snapshot("manual_debug_snapshot");
   /// ```
   pub fn request_snapshot(&self, reason: &str) {
@@ -115,6 +139,7 @@ impl Trace {
     let service = SnapshotWriter::new("ttlog");
 
     while let Ok(msg) = receiver.recv() {
+      println!("Received message: ###############################3{}", msg);
       match msg {
         Message::Event(ev) => {
           ring.push(ev);
