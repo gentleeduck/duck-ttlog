@@ -29,10 +29,11 @@ pub fn read_snapshots() -> Result<Vec<SnapshotFile>, Box<dyn Error>> {
     // Build data
     let path = dir.path().to_string_lossy().to_string();
     let path = path.strip_prefix("/tmp/").unwrap();
-    let chunks = path.split("-").into_iter().collect::<Vec<_>>();
+    let chunks = path.split('-').collect::<Vec<_>>();
+
     let (_prefix, _pid, tsz, _suffix) = match chunks.as_slice() {
-      [prefix, pid, tsz, suffix] => (prefix, pid, tsz, suffix),
-      _ => panic!("Expected 4 parts in filename"),
+      [prefix, pid, tsz, rest @ ..] => (prefix, pid, tsz, rest),
+      _ => panic!("Expected at least 3 parts in filename"),
     };
 
     snapshots.push(SnapshotFile {

@@ -1,0 +1,10 @@
+[package]
+name = "ttlog-filereader"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lz4 = "1.28.1"
+serde = "1.0.219"
+tracing = "0.1.41"
+ttlog = { path = "../../ttlog" }

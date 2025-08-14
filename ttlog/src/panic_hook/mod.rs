@@ -51,16 +51,12 @@ impl PanicHook {
       eprintln!("[Panic] Captured panic: {:?}", info);
 
       // Send snapshot request
-      if let Err(e) = sender.try_send(Message::SnapshotImmediate("panic".to_string())) {
+      if let Err(e) = sender.send(Message::SnapshotImmediate("panic".to_string())) {
         eprintln!("[Panic] Failed to send snapshot request: {:?}", e);
         return;
       }
 
       eprintln!("[Panic] Snapshot request sent, waiting for completion...");
-
-      // Give the writer thread time to process the snapshot
-      // This is a blocking operation, but we're in a panic handler
-      thread::sleep(Duration::milliseconds(100).to_std().unwrap());
 
       eprintln!("[Panic] Panic hook completed");
     }));
