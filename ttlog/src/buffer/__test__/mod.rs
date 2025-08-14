@@ -9,7 +9,7 @@ mod tests {
 
     for i in 0..(capacity + 3) {
       buffer.push(Event {
-        timestamps: 1755082651423,
+        timestamp: 1755082651423,
         level: i.to_string(),
         message: format!("Event number {}", i),
       });

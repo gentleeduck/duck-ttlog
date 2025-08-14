@@ -1,72 +1,149 @@
 mod __test__;
 
-use chrono::Utc;
-use lz4::block::{compress, CompressionMode};
-use std::fs::File;
-use std::io::Write;
-use std::sync::{Arc, Mutex};
+use chrono::Duration;
+use std::thread;
+use std::time::Instant;
 use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::Registry;
 
 use crate::buffer::RingBuffer;
 use crate::event::Event;
+use crate::snapshot::SnapshotWriter;
 use crate::trace_layer::BufferLayer;
 
+use crossbeam_channel::{bounded, Receiver, Sender};
+
 pub struct Trace {
-  pub buffer: Arc<Mutex<RingBuffer<Event>>>,
+  sender: Sender<Message>,
+}
+
+#[derive(Debug)]
+pub enum Message {
+  Event(Event),
+  SnapshotImmediate(String), // reason
+  FlushAndExit,              // optional: for graceful shutdown in tests
 }
 
 impl Trace {
-  pub fn init(capacity: usize) -> Self {
-    let buffer = Arc::new(Mutex::new(RingBuffer::new(capacity)));
-    let layer = BufferLayer::new(buffer.clone());
+  /// Initializes the tracing/logging system with a bounded channel and a writer thread.
+  ///
+  /// # Parameters
+  /// - `capacity`: The maximum number of messages the ring buffer can hold.
+  /// - `channel_capacity`: The maximum number of messages the channel can buffer before blocking.
+  ///
+  /// # Behavior
+  /// - Spawns a dedicated writer thread that reads messages from the channel and writes them into the ring buffer.
+  /// - Creates a `BufferLayer` that intercepts tracing events and sends them to the channel.
+  /// - Registers the `BufferLayer` with the global tracing subscriber. If a subscriber is already set, the error is ignored.
+  ///
+  /// # Returns
+  /// Returns an instance containing the sender, which can be used to send messages to the buffer asynchronously.
+  ///
+  /// # Example
+  /// ```rust
+  /// let trace_system = Trace::init(1024, 128);
+  /// trace_system.sender.send(Message::new("test")).unwrap();
+  /// ```
+  pub fn init(capacity: usize, channel_capacity: usize) -> Self {
+    let (sender, receiver) = bounded::<Message>(channel_capacity);
 
-    let subscriber = Registry::default().with(layer);
-    tracing::subscriber::set_global_default(subscriber)
-      .expect("Failed to set global tracing subscriber");
+    // Spawn writer thread which owns the ring buffer
+    thread::spawn(move || Trace::writer_loop(receiver, capacity));
 
-    Self { buffer }
+    // Create and register BufferLayer using the sender
+    let layer = BufferLayer::new(sender.clone());
+    let subscriber = tracing_subscriber::Registry::default().with(layer);
+    let _ = tracing::subscriber::set_global_default(subscriber); // ignore error if already set
+
+    Self { sender }
   }
 
-  pub fn get_buffer(&self) -> Arc<Mutex<RingBuffer<Event>>> {
-    self.buffer.clone()
+  /// Returns a clone of the sender used to send messages into the tracing buffer.
+  ///
+  /// This allows other threads or components to asynchronously send `Message`s
+  /// (events or snapshot requests) to the writer thread.
+  ///
+  /// # Example
+  /// ```rust
+  /// let sender = trace_system.get_sender();
+  /// sender.send(Message::Event(my_event)).unwrap();
+  /// ```
+  pub fn get_sender(&self) -> Sender<Message> {
+    self.sender.clone()
   }
 
-  pub fn flush_snapshot(buffer: Arc<Mutex<RingBuffer<Event>>>, reason: &str) {
-    // Check for the buffer
-    let buf = buffer.lock().unwrap().iter().cloned().collect::<Vec<_>>();
-    if buf.is_empty() {
-      return;
-    }
+  /// Requests an immediate snapshot of the current ring buffer.
+  ///
+  /// Sends a `SnapshotImmediate` message into the channel. The `reason` is included
+  /// in the snapshot metadata for logging or debugging purposes.
+  ///
+  /// If the channel is full, the request is ignored.
+  ///
+  /// # Parameters
+  /// - `reason`: A string describing why the snapshot was requested.
+  ///
+  /// # Example
+  /// ```rust
+  /// trace_system.request_snapshot("manual_debug_snapshot");
+  /// ```
+  pub fn request_snapshot(&self, reason: &str) {
+    let _ = self
+      .sender
+      .try_send(Message::SnapshotImmediate(reason.to_string()));
+  }
 
-    // Serialize the Buffer to Concise Binary Object Representation ( CBOR )
-    let cbor_buff = match serde_cbor::to_vec(&buf) {
-      Ok(buff) => buff,
-      Err(e) => {
-        println!("Failed to serialize snapshot: {}", e);
-        return;
-      },
-    };
+  /// The main writer loop that runs on a dedicated thread.
+  ///
+  /// This function continuously receives messages from the channel and:
+  /// - Stores events in a ring buffer.
+  /// - Writes immediate snapshots when requested.
+  /// - Flushes and exits when requested.
+  /// - Performs periodic flushes every 60 seconds.
+  ///
+  /// # Parameters
+  /// - `receiver`: The channel receiver used to receive messages from other threads.
+  /// - `capacity`: The size of the ring buffer to store incoming events.
+  ///
+  /// # Notes
+  /// - This function is intended to run on a separate thread.
+  /// - Snapshots are written using `snapshot_and_write`.
+  fn writer_loop(receiver: Receiver<Message>, capacity: usize) {
+    let mut ring = RingBuffer::new(capacity);
+    let mut last_periodic = Instant::now();
+    // you can set a periodic flush interval
+    let periodic_flush_interval = Duration::seconds(60).to_std().unwrap();
 
-    // NOTE: We can check for more high performance compression
-    let compressed_buff = match compress(&cbor_buff, Some(CompressionMode::DEFAULT), true) {
-      Ok(buff) => buff,
-      Err(e) => {
-        println!("Failed to compress snapshot: {}", e);
-        return;
-      },
-    };
+    let service = SnapshotWriter::new("ttlog");
 
-    // Build the file Path
-    let pid = std::process::id();
-    let timestamps = Utc::now().format("%Y%m%d%H%M%S");
-    let filename = format!("/tmp/ttlog-{}-{}-{}.bin", pid, timestamps, reason);
+    while let Ok(msg) = receiver.recv() {
+      match msg {
+        Message::Event(ev) => {
+          ring.push(ev);
+        },
+        Message::SnapshotImmediate(reason) => {
+          if !ring.is_empty() {
+            if let Err(e) = service.snapshot_and_write(&mut ring, reason) {
+              eprintln!("[Snapshot] failed: {}", e);
+            }
+          } else {
+            eprintln!(
+              "[Snapshot] buffer empty, skipping snapshot (reason={})",
+              reason
+            );
+          }
+        },
+        Message::FlushAndExit => {
+          if !ring.is_empty() {
+            let _ = service.snapshot_and_write(&mut ring, "flush_and_exit".to_string());
+          }
+          break;
+        },
+      }
 
-    // Write the file
-    if let Err(e) = File::create(&filename).and_then(|mut f| f.write_all(&compressed_buff)) {
-      eprintln!("[Snapshot] Failed to write file {}: {}", filename, e);
-    } else {
-      eprintln!("[Snapshot] Saved {} events to {}", buf.len(), filename);
+      // periodic flush
+      if last_periodic.elapsed() >= periodic_flush_interval && !ring.is_empty() {
+        let _ = service.snapshot_and_write(&mut ring, "periodic".to_string());
+        last_periodic = Instant::now();
+      }
     }
   }
 }
