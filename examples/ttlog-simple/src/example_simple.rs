@@ -5,28 +5,34 @@ use tracing::{debug, error, info, warn};
 use ttlog::{panic_hook::PanicHook, trace::Trace};
 
 pub fn example_simple() {
-  println!("TTLog Quick Start Example");
+  // println!("TTLog Quick Start Example");
 
   // Step 1: Initialize the tracing system
   // Parameters: (ring_buffer_capacity, channel_capacity)
   let trace_system = Trace::init(1000, 100);
+  PanicHook::install(trace_system.get_sender());
 
   // Step 2: Use standard tracing macros to log
-  info!("Application started successfully");
-  warn!("This is a warning message");
-  error!("This is an error message");
+  // info!("Application started successfully");
+  // warn!("This is a warning message");
+  // error!("This is an error message");
 
   // Step 3: Log with structured data
   let user_id = 42;
   let username = "alice";
   info!(user_id = user_id, username = username, "User logged in");
 
+  // let result = std::panic::catch_unwind(|| {
+  //   error!("Something went wrong before panic");
+  //   panic!("Simulated application crash!");
+  // });
+  panic!("Simulated application crash!");
   // Step 4: Request a manual snapshot (optional)
-  trace_system.request_snapshot("quick_start_example");
+  // trace_system.request_snapshot("quick_start_example");
 
   // Step 5: Give time for the snapshot to be written
-  thread::sleep(Duration::from_millis(200));
+  // thread::sleep(Duration::from_millis(200));
 
-  println!("Done! Check /tmp/ for ttlog-*.bin files");
-  println!("Run: ls -la /tmp/ttlog-*.bin");
+  // println!("Done! Check /tmp/ for ttlog-*.bin files");
+  // println!("Run: ls -la /tmp/ttlog-*.bin");
 }

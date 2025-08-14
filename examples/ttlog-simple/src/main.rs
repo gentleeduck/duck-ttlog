@@ -24,20 +24,20 @@ fn main() {
 
   // Run all examples
   example_simple();
-  example_basic_logging();
-  example_structured_logging();
-  example_high_volume_logging();
-  example_multithreaded_logging();
-  example_panic_handling();
-  example_custom_service();
-  example_error_scenarios();
+  // example_basic_logging();
+  // example_structured_logging();
+  // example_high_volume_logging();
+  // example_multithreaded_logging();
+  // example_panic_handling();
+  // example_custom_service();
+  // example_error_scenarios();
 
-  println!("\n=== All Examples Completed ===");
-  println!("Check /tmp/ directory for generated snapshot files:");
-  println!("  ls -la /tmp/ttlog-*.bin");
-  println!("\nTo decompress and view a snapshot file:");
-  println!("  # This would require a separate utility to decompress LZ4 and decode CBOR");
-
-  // Give final time for all snapshots to be written
-  thread::sleep(Duration::from_millis(500));
+  // println!("\n=== All Examples Completed ===");
+  // println!("Check /tmp/ directory for generated snapshot files:");
+  // println!("  ls -la /tmp/ttlog-*.bin");
+  // println!("\nTo decompress and view a snapshot file:");
+  // println!("  # This would require a separate utility to decompress LZ4 and decode CBOR");
+  //
+  // // Give final time for all snapshots to be written
+  // thread::sleep(Duration::from_millis(500));
 }

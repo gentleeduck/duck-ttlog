@@ -26,7 +26,9 @@ impl<T: Clone> RingBuffer<T> {
   /// * `capacity` - The maximum number of items the buffer can store.
   ///
   /// # Example
-  /// ```
+  /// ```rust
+  /// use ttlog::buffer::RingBuffer;
+  ///
   /// let buffer: RingBuffer<i32> = RingBuffer::new(10);
   /// assert_eq!(buffer.len(), 0);
   /// ```
@@ -46,7 +48,9 @@ impl<T: Clone> RingBuffer<T> {
   /// * `item` - The item to add to the buffer.
   ///
   /// # Example
-  /// ```
+  /// ```rust
+  /// use ttlog::buffer::RingBuffer;
+  ///
   /// let mut buffer = RingBuffer::new(2);
   /// buffer.push(1);
   /// buffer.push(2);
@@ -69,7 +73,9 @@ impl<T: Clone> RingBuffer<T> {
   /// A `Vec<T>` containing all items in insertion order.
   ///
   /// # Example
-  /// ```
+  /// ```rust
+  /// use ttlog::buffer::RingBuffer;
+  ///
   /// let mut buffer = RingBuffer::new(3);
   /// buffer.push(1);
   /// buffer.push(2);
@@ -87,7 +93,9 @@ impl<T: Clone> RingBuffer<T> {
   /// Items are iterated in insertion order (oldest to newest).
   ///
   /// # Example
-  /// ```
+  /// ```rust
+  /// use ttlog::buffer::RingBuffer;
+  ///
   /// let mut buffer = RingBuffer::new(2);
   /// buffer.push(10);
   /// buffer.push(20);
@@ -102,7 +110,9 @@ impl<T: Clone> RingBuffer<T> {
   /// Returns the number of items currently in the buffer.
   ///
   /// # Example
-  /// ```
+  /// ```rust
+  /// use ttlog::buffer::RingBuffer;
+  ///
   /// let mut buffer = RingBuffer::new(2);
   /// assert_eq!(buffer.len(), 0);
   /// buffer.push(5);
@@ -115,7 +125,9 @@ impl<T: Clone> RingBuffer<T> {
   /// Returns `true` if the buffer is empty.
   ///
   /// # Example
-  /// ```
+  /// ```rust
+  /// use ttlog::buffer::RingBuffer;
+  ///
   /// let buffer: RingBuffer<i32> = RingBuffer::new(2);
   /// assert!(buffer.is_empty());
   /// ```
