@@ -1,5 +1,10 @@
 # TTLog - High-Performance Logging Library
 
+<p align="center">
+  <img src="./public/logo.png" alt="Duck UI Logo" width="500"/>
+</p>
+
+
 ## Overview
 
 TTLog is a high-performance, non-blocking logging library for Rust applications that maintains a circular buffer of log events in memory and automatically creates compressed snapshots to disk under specific conditions. It's designed for production systems where logging performance is critical and post-mortem debugging capabilities are essential.
