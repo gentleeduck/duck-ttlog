@@ -75,7 +75,7 @@ fn file_action_menu(file: &str, snapshots: &Vec<SnapShot>) -> Result<(), Box<dyn
     {
       "Preview" => preview_file(file, snapshots)?,
       "Delete" => {
-        fs::remove_file(file)?;
+        fs::remove_file(format!("/tmp/{}.bin", file))?;
         println!("{}", format!("Deleted file: {}", file).red());
         break; // exit after deletion
       },

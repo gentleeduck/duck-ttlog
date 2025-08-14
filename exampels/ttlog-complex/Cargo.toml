@@ -1,0 +1,16 @@
+[package]
+name = "ttlog-complex"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.47.1", features = ["full"] }
+ttlog = { path = "../../ttlog" }
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+serde = { version = "1.0.219", features = ["derive"] }
+lz4 = "1.28.1"
+serde_cbor = "0.11.2"
+serde_json = "1.0.142"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
