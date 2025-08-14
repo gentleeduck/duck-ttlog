@@ -4,5 +4,13 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = "0.4.41"
+colored = "3.0.0"
+figlet-rs = "0.1.5"
+inquire = "0.7.5"
+lz4 = "1.28.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11.2"
+terminal_size = "0.4.3"
 tracing = "0.1.41"
 ttlog = { path = "../ttlog" }
