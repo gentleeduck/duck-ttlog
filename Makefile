@@ -161,3 +161,9 @@ check-ttlog-view:
 	@echo "Checking ttlog-view crate..."
 	cd ttlog-view && cargo check
 
+# Export full git history for docs
+history:
+	@echo "Exporting full git history to docs/full_history.txt..."
+	./export_git_full_history.sh > docs/full_history.txt
+	@echo "Done. See docs/full_history.txt"
+
