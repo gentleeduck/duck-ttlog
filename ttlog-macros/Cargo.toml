@@ -1,0 +1,17 @@
+[package]
+name = "ttlog-macros"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+quote = "1.0.40"
+syn = "2.0.106"
+
+
