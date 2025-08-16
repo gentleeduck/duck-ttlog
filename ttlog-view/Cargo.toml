@@ -15,3 +15,6 @@ serde_cbor = "0.11.2"
 terminal_size = "0.4.3"
 tracing = "0.1.41"
 ttlog = { path = "../ttlog" }
+ttlog-macros = { path = "../ttlog-macros" }
+
+

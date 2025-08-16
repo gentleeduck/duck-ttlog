@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod __test__ {
 
-  use crate::event::Event;
+  use crate::event::LogEvent;
 
   #[test]
   fn test_event_creation() {
-    let event = Event::new(
+    let event = LogEvent::new(
       1234567890,
       "INFO".to_string(),
       "Test message".to_string(),
@@ -20,7 +20,7 @@ mod __test__ {
 
   #[test]
   fn test_event_default() {
-    let event = Event::default();
+    let event = LogEvent::default();
 
     assert_eq!(event.timestamp, 0);
     assert_eq!(event.level, "");
@@ -30,7 +30,7 @@ mod __test__ {
 
   #[test]
   fn test_event_clone() {
-    let event = Event::new(
+    let event = LogEvent::new(
       1234567890,
       "WARN".to_string(),
       "Warning message".to_string(),
@@ -47,7 +47,7 @@ mod __test__ {
 
   #[test]
   fn test_event_serialization() {
-    let event = Event::new(
+    let event = LogEvent::new(
       1234567890,
       "INFO".to_string(),
       "Test message".to_string(),
@@ -63,7 +63,7 @@ mod __test__ {
 
   #[test]
   fn test_event_deserialization() {
-    let original_event = Event::new(
+    let original_event = LogEvent::new(
       1234567890,
       "INFO".to_string(),
       "Test message".to_string(),
@@ -71,7 +71,7 @@ mod __test__ {
     );
 
     let json = original_event.serialize();
-    let deserialized_event = Event::deserialize(json);
+    let deserialized_event = LogEvent::deserialize(json);
 
     assert_eq!(original_event.timestamp, deserialized_event.timestamp);
     assert_eq!(original_event.level, deserialized_event.level);
@@ -81,7 +81,7 @@ mod __test__ {
 
   #[test]
   fn test_event_display() {
-    let event = Event::new(
+    let event = LogEvent::new(
       1234567890,
       "INFO".to_string(),
       "Display test".to_string(),
@@ -96,8 +96,8 @@ mod __test__ {
   }
 
   /// Helper to create events with different levels
-  fn event_with_level(level: &str) -> Event {
-    Event::new(
+  fn event_with_level(level: &str) -> LogEvent {
+    LogEvent::new(
       1000,
       level.to_string(),
       "Level test".to_string(),
@@ -121,7 +121,7 @@ mod __test__ {
   fn test_event_special_characters() {
     let msg = "Message with \"quotes\", newlines\n, and \\backslashes\\";
     let target = "target/with/special\\chars";
-    let event = Event::new(
+    let event = LogEvent::new(
       123,
       "DEBUG".to_string(),
       msg.to_string(),
@@ -133,14 +133,14 @@ mod __test__ {
     assert!(json.contains("newlines\\n"));
     assert!(json.contains("\\\\backslashes\\\\"));
 
-    let deserialized = Event::deserialize(json);
+    let deserialized = LogEvent::deserialize(json);
     assert_eq!(deserialized.message, msg);
     assert_eq!(deserialized.target, target);
   }
 
   #[test]
   fn test_event_multiple_clone_and_modify() {
-    let event = Event::new(
+    let event = LogEvent::new(
       1,
       "INFO".to_string(),
       "Original".to_string(),
@@ -161,7 +161,7 @@ mod __test__ {
   #[test]
   fn test_event_json_round_trip_with_special_chars() {
     let msg = "Special chars: \t\n\"\\";
-    let event = Event::new(
+    let event = LogEvent::new(
       999,
       "WARN".to_string(),
       msg.to_string(),
@@ -169,7 +169,7 @@ mod __test__ {
     );
 
     let json = event.serialize();
-    let deserialized = Event::deserialize(json.clone());
+    let deserialized = LogEvent::deserialize(json.clone());
     let reserialized = deserialized.serialize();
 
     assert_eq!(json, reserialized);
@@ -178,7 +178,7 @@ mod __test__ {
 
   #[test]
   fn test_event_display_matches_serialize() {
-    let event = Event::new(
+    let event = LogEvent::new(
       555,
       "ERROR".to_string(),
       "Display test".to_string(),

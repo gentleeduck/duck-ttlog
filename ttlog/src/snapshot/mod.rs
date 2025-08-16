@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::Write;
 
 use crate::buffer::RingBuffer;
-use crate::event::Event;
+use crate::event::LogEvent;
 
 /// A snapshot bundles metadata together with a sequence of events.
 ///
@@ -33,7 +33,7 @@ pub struct Snapshot {
   /// Reason for taking the snapshot (free-form string).
   pub reason: String,
   /// Captured events (in insertion order).
-  pub events: Vec<Event>,
+  pub events: Vec<LogEvent>,
 }
 
 /// Writes `Snapshot` instances to disk.
@@ -99,7 +99,7 @@ impl SnapshotWriter {
   ///   and moves the event vector out of the `RingBuffer`.
   pub fn create_snapshot(
     &self,
-    ring: &mut RingBuffer<Event>,
+    ring: &mut RingBuffer<LogEvent>,
     reason: impl Into<String>,
   ) -> Option<Snapshot> {
     let events = ring.take_snapshot();
@@ -203,7 +203,7 @@ impl SnapshotWriter {
   /// ```
   pub fn snapshot_and_write(
     &self,
-    ring: &mut RingBuffer<Event>,
+    ring: &mut RingBuffer<LogEvent>,
     reason: impl Into<String>,
   ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(snapshot) = self.create_snapshot(ring, reason) {

@@ -1,7 +1,7 @@
 [package]
 name = "ttlog"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
@@ -14,6 +14,9 @@ tracing-subscriber = "0.3"
 crossbeam-channel = "0.5"
 gethostname = "0.4"
 tempfile = "3.8"
+smallvec = "1.15.1"
+crossbeam-epoch = "0.9.18"
+crossbeam-queue = "0.3.12"
 
 [dev-dependencies]
 tempfile = "3.8"

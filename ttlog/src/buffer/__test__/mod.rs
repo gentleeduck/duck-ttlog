@@ -2,7 +2,7 @@
 mod __test__ {
 
   use crate::buffer::RingBuffer;
-  use crate::event::Event;
+  use crate::event::LogEvent;
 
   #[test]
   fn test_ring_buffer_new() {
@@ -104,19 +104,19 @@ mod __test__ {
   fn test_ring_buffer_with_events() {
     let mut buffer = RingBuffer::new(3);
 
-    let event1 = Event::new(
+    let event1 = LogEvent::new(
       1000,
       "INFO".to_string(),
       "First".to_string(),
       "target1".to_string(),
     );
-    let event2 = Event::new(
+    let event2 = LogEvent::new(
       2000,
       "WARN".to_string(),
       "Second".to_string(),
       "target2".to_string(),
     );
-    let event3 = Event::new(
+    let event3 = LogEvent::new(
       3000,
       "ERROR".to_string(),
       "Third".to_string(),
@@ -127,21 +127,21 @@ mod __test__ {
     buffer.push(event2.clone());
     buffer.push(event3.clone());
 
-    let events: Vec<Event> = buffer.iter().cloned().collect();
+    let events: Vec<LogEvent> = buffer.iter().cloned().collect();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].message, "First");
     assert_eq!(events[1].message, "Second");
     assert_eq!(events[2].message, "Third");
 
     // Test overflow with events
-    let event4 = Event::new(
+    let event4 = LogEvent::new(
       4000,
       "DEBUG".to_string(),
       "Fourth".to_string(),
       "target4".to_string(),
     );
     buffer.push(event4.clone());
-    let events: Vec<Event> = buffer.iter().cloned().collect();
+    let events: Vec<LogEvent> = buffer.iter().cloned().collect();
     assert_eq!(events.len(), 3);
     assert_eq!(events[0].message, "Second"); // First evicted
     assert_eq!(events[2].message, "Fourth");

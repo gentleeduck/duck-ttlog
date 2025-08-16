@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod __test__ {
   use crate::buffer::RingBuffer;
-  use crate::event::Event;
+  use crate::event::LogEvent;
   use crate::snapshot::SnapshotWriter;
 
   #[test]
@@ -19,13 +19,13 @@ mod __test__ {
     let writer = SnapshotWriter::new("test_service");
 
     // Add some events
-    buffer.push(Event::new(
+    buffer.push(LogEvent::new(
       1000,
       "INFO".to_string(),
       "First".to_string(),
       "target1".to_string(),
     ));
-    buffer.push(Event::new(
+    buffer.push(LogEvent::new(
       2000,
       "WARN".to_string(),
       "Second".to_string(),
@@ -46,7 +46,7 @@ mod __test__ {
 
   #[test]
   fn test_snapshot_creation_empty_buffer() {
-    let mut buffer: RingBuffer<Event> = RingBuffer::new(5);
+    let mut buffer: RingBuffer<LogEvent> = RingBuffer::new(5);
     let writer = SnapshotWriter::new("test_service");
 
     let snapshot = writer.create_snapshot(&mut buffer, "empty_reason");
@@ -60,7 +60,7 @@ mod __test__ {
     let mut buffer = RingBuffer::new(3);
     let writer = SnapshotWriter::new("metadata_test");
 
-    buffer.push(Event::new(
+    buffer.push(LogEvent::new(
       1000,
       "INFO".to_string(),
       "Test".to_string(),
