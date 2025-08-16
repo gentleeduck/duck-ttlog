@@ -1,6 +1,6 @@
 mod __test__;
 
-use crate::{event::Event, trace::Message};
+use crate::{event::LogEvent, trace::Message};
 
 use chrono::Utc;
 use crossbeam_channel::{Sender, TrySendError};
@@ -58,9 +58,14 @@ where
     event.record(&mut visitor);
     let message = visitor.message.unwrap_or_else(|| "".to_string());
     let target = event.metadata().target().to_string();
+    // let fields = event
+    //   .metadata()
+    //   .fields()
+    //   .iter()
+    //   .collect::<Vec<(&Field, &dyn std::fmt::Debug)>>();
 
     // Build a minimal Event
-    let new_event = Event::new(ts, level, message, target);
+    let new_event = LogEvent::new(ts, level, message, target);
 
     // Attempt non-blocking send; drop if channel full
     match self.sender.try_send(Message::Event(new_event)) {

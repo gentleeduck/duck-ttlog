@@ -6,20 +6,22 @@ use std::time::Instant;
 use tracing_subscriber::layer::SubscriberExt;
 
 use crate::buffer::RingBuffer;
-use crate::event::Event;
+use crate::event::LogEvent;
 use crate::snapshot::SnapshotWriter;
 use crate::trace_layer::BufferLayer;
 
 use crossbeam_channel::{bounded, Receiver, Sender};
+use std::sync::atomic;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Trace {
   sender: Sender<Message>,
+  level: atomic::AtomicU8,
 }
 
 #[derive(Debug)]
 pub enum Message {
-  Event(Event),
+  Event(LogEvent),
   SnapshotImmediate(String), // reason
   FlushAndExit,              // optional: for graceful shutdown in tests
 }
@@ -35,30 +37,13 @@ impl std::fmt::Display for Message {
 }
 
 impl Trace {
-  /// Initializes the tracing/logging system with a bounded channel and a writer thread.
-  ///
-  /// # Parameters
-  /// - `capacity`: The maximum number of messages the ring buffer can hold.
-  /// - `channel_capacity`: The maximum number of messages the channel can buffer before blocking.
-  ///
-  /// # Behavior
-  /// - Spawns a dedicated writer thread that reads messages from the channel and writes them into the ring buffer.
-  /// - Creates a `BufferLayer` that intercepts tracing events and sends them to the channel.
-  /// - Registers the `BufferLayer` with the global tracing subscriber. If a subscriber is already set, the error is ignored.
-  ///
-  /// # Returns
-  /// Returns an instance containing the sender, which can be used to send messages to the buffer asynchronously.
-  ///
-  /// # Example
-  /// ```rust
-  /// use ttlog::trace::{Trace, Message};
-  /// use ttlog::event::Event;
-  ///
-  /// let trace_system = Trace::init(1024, 128);
-  /// let event = Event::new(1234567890, "INFO".to_string(), "test message".to_string(), "test_target".to_string());
-  /// let sender = trace_system.get_sender();
-  /// sender.send(Message::Event(event)).unwrap();
-  /// ```
+  pub fn new(sender: Sender<Message>) -> Self {
+    Self {
+      sender,
+      level: atomic::AtomicU8::new(0),
+    }
+  }
+
   pub fn init(capacity: usize, channel_capacity: usize) -> Self {
     let (sender, receiver) = bounded::<Message>(channel_capacity);
 
@@ -139,7 +124,6 @@ impl Trace {
     let service = SnapshotWriter::new("ttlog");
 
     while let Ok(msg) = receiver.recv() {
-      println!("Received message: ###############################3{}", msg);
       match msg {
         Message::Event(ev) => {
           ring.push(ev);

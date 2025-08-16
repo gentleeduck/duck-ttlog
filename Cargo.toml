@@ -1,20 +1,22 @@
 [workspace]
 members = [
-    "ttlog",
-    "ttlog-view",
-    "examples/ttlog-simple",
-    "examples/ttlog-server", 
-    "examples/ttlog-complex",
-    "examples/ttlog-filereader",
+  "ttlog",
+  "ttlog-view",
+  "examples/ttlog-simple",
+  "examples/ttlog-server", 
+  "examples/ttlog-complex",
+  "examples/ttlog-filereader", 
+  "ttlog-macros",
 ]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
+edition = "2024"
+authors = ["wildduck <duckui@duck.com>"]
 description = "A comprehensive tracing and logging system"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 repository = "https://github.com/yourusername/ttlog"
 
 [workspace.dependencies]
 # Add common dependencies here if needed 
+

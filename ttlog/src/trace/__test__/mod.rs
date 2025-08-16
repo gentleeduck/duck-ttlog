@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod __test__ {
 
-  use crate::event::Event;
+  use crate::event::LogEvent;
   use crate::trace::{Message, Trace};
 
   #[test]
@@ -18,7 +18,7 @@ mod __test__ {
     let sender = trace_system.get_sender();
 
     // Should be able to send messages
-    let result = sender.send(Message::Event(Event::new(
+    let result = sender.send(Message::Event(LogEvent::new(
       1000,
       "INFO".to_string(),
       "Test message".to_string(),
@@ -38,7 +38,7 @@ mod __test__ {
 
   #[test]
   fn test_trace_message_display() {
-    let event = Event::new(
+    let event = LogEvent::new(
       1000,
       "INFO".to_string(),
       "Test message".to_string(),
