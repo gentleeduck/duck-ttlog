@@ -18,3 +18,4 @@ smallvec = { workspace = true }
 serde = { workspace = true } 
 serde_cbor = { workspace = true }
 
+criterion = "0.7.0"

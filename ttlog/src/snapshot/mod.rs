@@ -36,6 +36,7 @@ pub struct Snapshot {
 /// ```
 ///
 /// where `<created_at>` uses `YYYYMMDDHHMMSS`.
+#[derive(Debug, Clone)]
 pub struct SnapshotWriter {
   service: String,
 }

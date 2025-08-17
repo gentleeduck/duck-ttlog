@@ -120,8 +120,124 @@ mod utils;
 //     }
 //   };
 // }
-use ttlog_event::info;
+use std::thread;
+use std::time::Duration;
 
-fn main() {
-  info!(user_id = user_id, username = username, "User logged in");
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+
+use ttlog::trace::Trace;
+
+fn bench_single_threaded_logging(c: &mut Criterion) {
+  let trace_system = Trace::init(1024, 128);
+
+  c.bench_function("single_log_event", |b| {
+    b.iter(|| {
+      tracing::info!("Benchmark log message {}", 42);
+    })
+  });
 }
+
+fn bench_multi_threaded_logging(c: &mut Criterion) {
+  let mut group = c.benchmark_group("multithreaded_logging");
+
+  for thread_count in [1, 2, 4, 8, 16].iter() {
+    group.bench_with_input(
+      BenchmarkId::new("threads", thread_count),
+      thread_count,
+      |b, &thread_count| {
+        b.iter(|| {
+          let trace_system = Trace::init(1024 * thread_count, 128);
+          let handles: Vec<_> = (0..thread_count)
+            .map(|i| {
+              thread::spawn(move || {
+                for j in 0..1000 {
+                  tracing::info!("Thread {} log {}", i, j);
+                }
+              })
+            })
+            .collect();
+
+          for handle in handles {
+            handle.join().unwrap();
+          }
+        })
+      },
+    );
+  }
+  group.finish();
+}
+
+fn bench_structured_logging(c: &mut Criterion) {
+  let trace_system = Trace::init(1024, 128);
+
+  c.bench_function("structured_log", |b| {
+    b.iter(|| {
+      tracing::info!(
+        user_id = 12345,
+        action = "login",
+        duration_ms = 150,
+        "User login completed"
+      );
+    })
+  });
+}
+
+fn bench_log_levels(c: &mut Criterion) {
+  let trace_system = Trace::init(1024, 128);
+  let mut group = c.benchmark_group("log_levels");
+
+  group.bench_function("trace", |b| b.iter(|| tracing::trace!("Trace message")));
+
+  group.bench_function("debug", |b| b.iter(|| tracing::debug!("Debug message")));
+
+  group.bench_function("info", |b| b.iter(|| tracing::info!("Info message")));
+
+  group.bench_function("warn", |b| b.iter(|| tracing::warn!("Warning message")));
+
+  group.bench_function("error", |b| b.iter(|| tracing::error!("Error message")));
+
+  group.finish();
+}
+
+fn bench_backpressure(c: &mut Criterion) {
+  // Test what happens when writer can't keep up
+  let trace_system = Trace::init(64, 8); // Small buffers to trigger backpressure
+
+  c.bench_function("backpressure_scenario", |b| {
+    b.iter(|| {
+      for i in 0..1000 {
+        tracing::info!("Backpressure test {}", i);
+      }
+    })
+  });
+}
+
+fn bench_snapshot_creation(c: &mut Criterion) {
+  let trace_system = Trace::init(1024, 128);
+
+  // Fill up the buffer first
+  for i in 0..500 {
+    tracing::info!("Setup message {}", i);
+  }
+
+  // Small delay to let events get processed
+  thread::sleep(Duration::from_millis(10));
+
+  c.bench_function("snapshot_request", |b| {
+    b.iter(|| {
+      trace_system.request_snapshot("benchmark");
+    })
+  });
+}
+
+criterion_group!(
+  benches,
+  bench_single_threaded_logging,
+  bench_multi_threaded_logging,
+  bench_structured_logging,
+  bench_log_levels,
+  bench_backpressure,
+  bench_snapshot_creation
+);
+
+criterion_main!(benches);

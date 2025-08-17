@@ -17,7 +17,29 @@ crossbeam-queue = "0.3.12"
 serde = { workspace = true }
 serde_cbor = { workspace = true }
 smallvec = { workspace = true }
+criterion = "0.7.0"
+tabled = "0.15"
 
 [dev-dependencies]
 tempfile = "3.8"
+
+[[bench]]
+name = "distributed_bench"
+harness = false
+
+[[bin]]
+name = "test_performance"
+path = "benches/test_performance.rs"
+
+[[bin]]
+name = "heavy_stress_test"
+path = "benches/heavy_stress_test.rs"
+
+[[bin]]
+name = "distributed_simulator"
+path = "benches/distributed_simulator.rs"
+
+[[bin]]
+name = "max_performance"
+path = "benches/max_performance.rs"
 
