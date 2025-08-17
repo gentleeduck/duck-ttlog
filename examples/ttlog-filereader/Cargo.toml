@@ -1,10 +1,21 @@
 [package]
 name = "ttlog-filereader"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "TTLog file reader example"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-lz4 = "1.28.1"
-serde = "1.0.219"
-tracing = "0.1.41"
+# Core dependencies
+serde = { workspace = true }
+lz4 = { workspace = true }
+
+# Tracing ecosystem
+tracing = { workspace = true }
+
+# Internal dependencies
 ttlog = { path = "../../ttlog" }

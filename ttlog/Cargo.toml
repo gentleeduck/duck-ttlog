@@ -1,28 +1,42 @@
 [package]
 name = "ttlog"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-chrono = { version = "0.4", features = ["serde"] }
-lz4 = "1.28"
-serde_json = "1.0"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-crossbeam-channel = "0.5"
-gethostname = "0.4"
-tempfile = "3.8"
-crossbeam-epoch = "0.9.18"
-crossbeam-queue = "0.3.12"
+# Core dependencies
 serde = { workspace = true }
 serde_cbor = { workspace = true }
+serde_json = { workspace = true }
 smallvec = { workspace = true }
-arrayvec = { workspace = true }
-criterion = "0.7.0"
-tabled = "0.15"
+chrono = { workspace = true }
+lz4 = { workspace = true }
+
+# Async and concurrency
+crossbeam-channel = { workspace = true }
+crossbeam-epoch = { workspace = true }
+crossbeam-queue = { workspace = true }
+
+# Tracing ecosystem
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# System utilities
+gethostname = { workspace = true }
+tempfile = { workspace = true }
+
+# Development and testing
+criterion = { workspace = true }
+tabled = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.8"
+tempfile = { workspace = true }
 
 [[bench]]
 name = "distributed_bench"

@@ -14,6 +14,18 @@ use ttlog::{
   lf_buffer::LockFreeRingBuffer,
   snapshot::SnapshotWriter,
 };
+
+// Configure Criterion for reliable benchmarks
+fn configure_criterion() -> Criterion {
+    Criterion::default()
+        .sample_size(30)           // More samples for reliability
+        .measurement_time(Duration::from_secs(10))  // Longer measurement time
+        .warm_up_time(Duration::from_secs(5))       // Proper warmup
+        .confidence_level(0.95)    // 95% confidence interval
+        .significance_level(0.05)  // 5% significance level
+        .noise_threshold(0.05)     // 5% noise threshold
+}
+
 fn current_thread_id_u64() -> u32 {
   use std::collections::hash_map::DefaultHasher;
   use std::hash::{Hash, Hasher};
@@ -53,7 +65,6 @@ impl DistributedNode {
                 .unwrap()
                 .as_nanos() as u64,
               level: LogLevel::Info,
-              // target: Cow::Borrowed(format!("node_{}_worker_{}", node_id, worker_id).as_str()),
               target: Cow::Owned(format!("node_{}_worker_{}", node_id, worker_id).to_string()),
               message: Cow::Owned(format!("Distributed event {} from worker {}", i, worker_id)),
               fields: smallvec::smallvec![

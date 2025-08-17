@@ -1,21 +1,35 @@
 [package]
 name = "ttlog-view"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "TTLog viewer and analysis tool"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
-chrono = "0.4.41"
-colored = "3.0.0"
-figlet-rs = "0.1.5"
-inquire = "0.7.5"
-lz4 = "1.28.1"
-regex = "1.11.1"
-terminal_size = "0.4.3"
-tracing = "0.1.41"
+# Core dependencies
+serde = { workspace = true }
+serde_cbor = { workspace = true }
+smallvec = { workspace = true }
+chrono = { workspace = true }
+lz4 = { workspace = true }
+
+# UI and display
+colored = { workspace = true }
+figlet-rs = { workspace = true }
+inquire = { workspace = true }
+regex = { workspace = true }
+terminal_size = { workspace = true }
+
+# Tracing ecosystem
+tracing = { workspace = true }
+
+# Internal dependencies
 ttlog = { path = "../ttlog" }
 ttlog-event = { path = "../ttlog-event" }
-smallvec = { workspace = true }
-serde = { workspace = true } 
-serde_cbor = { workspace = true }
 
-criterion = "0.7.0"
+# Development and testing
+criterion = { workspace = true }

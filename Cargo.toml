@@ -2,23 +2,61 @@
 members = [
   "ttlog",
   "ttlog-view",
+  "ttlog-event",
   "examples/ttlog-simple",
   "examples/ttlog-server", 
   "examples/ttlog-complex",
   "examples/ttlog-filereader", 
-  "ttlog-event",
 ]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["wildduck <duckui@duck.com>"]
-description = "A comprehensive tracing and logging system"
+description = "A comprehensive high-performance tracing and logging system"
 license = "MIT"
-repository = "https://github.com/yourusername/ttlog"
+repository = "https://github.com/wildduck/ttlog"
+keywords = ["logging", "tracing", "performance", "async", "distributed"]
+categories = ["development-tools", "asynchronous", "data-structures"]
 
 [workspace.dependencies]
+# Core dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_cbor = "0.11.2"
+serde_json = "1.0"
 smallvec = { version = "1.15.1", features = ["serde"] }
-arrayvec = { version = "0.7.6", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+lz4 = "1.28"
+
+# Async and concurrency
+tokio = { version = "1.47.1", features = ["full"] }
+crossbeam-channel = "0.5"
+crossbeam-epoch = "0.9.18"
+crossbeam-queue = "0.3.12"
+
+# Tracing ecosystem
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# System utilities
+gethostname = "0.4"
+tempfile = "3.8"
+
+# Development and testing
+criterion = "0.7.0"
+tabled = "0.15"
+
+# UI and display
+colored = "3.0.0"
+figlet-rs = "0.1.5"
+inquire = "0.7.5"
+regex = "1.11.1"
+terminal_size = "0.4.3"
+
+# Proc macro dependencies
+quote = "1.0.40"
+syn = { version = "2.0", features = ["full"] }
+proc-macro2 = "1.0"
+
+# Utilities
+rand = "0.8"
