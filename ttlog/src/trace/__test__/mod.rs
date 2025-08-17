@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod __test__ {
 
-  use crate::event::LogEvent;
+  use crate::event::{EventBuilder, LogLevel};
   use crate::trace::{Message, Trace};
 
   #[test]
@@ -17,13 +17,15 @@ mod __test__ {
     let trace_system = Trace::init(100, 50);
     let sender = trace_system.get_sender();
 
-    // Should be able to send messages
-    let result = sender.send(Message::Event(LogEvent::new(
-      1000,
-      "INFO".to_string(),
-      "Test message".to_string(),
-      "test_target".to_string(),
-    )));
+    // Should be able to send messages using the new builder API
+    let event = EventBuilder::new_with_capacity(0)
+      .timestamp_nanos(1000)
+      .level(LogLevel::Info)
+      .target("test_target")
+      .message("Test message".to_string())
+      .build();
+
+    let result = sender.send(Message::Event(event));
 
     assert!(result.is_ok());
   }
@@ -38,12 +40,12 @@ mod __test__ {
 
   #[test]
   fn test_trace_message_display() {
-    let event = LogEvent::new(
-      1000,
-      "INFO".to_string(),
-      "Test message".to_string(),
-      "test_target".to_string(),
-    );
+    let event = EventBuilder::new_with_capacity(0)
+      .timestamp_nanos(1000)
+      .level(LogLevel::Info)
+      .target("test_target")
+      .message("Test message".to_string())
+      .build();
 
     let messages = vec![
       Message::Event(event.clone()),

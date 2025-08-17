@@ -19,7 +19,7 @@ mod __test__ {
 
   #[test]
   fn test_push_and_pop_single_item() {
-    let buffer = LockFreeRingBuffer::new(3);
+    let buffer = LockFreeRingBuffer::<i32>::new(3);
 
     // Push single item
     assert_eq!(buffer.push(42), Ok(None));
@@ -38,7 +38,7 @@ mod __test__ {
 
   #[test]
   fn test_push_and_pop_multiple_items() {
-    let buffer = LockFreeRingBuffer::new(3);
+    let buffer = LockFreeRingBuffer::<i32>::new(3);
 
     // Push multiple items
     assert_eq!(buffer.push(1), Ok(None));
@@ -61,7 +61,7 @@ mod __test__ {
 
   #[test]
   fn test_push_overwrite() {
-    let buffer = LockFreeRingBuffer::new(2);
+    let buffer = LockFreeRingBuffer::<i32>::new(2);
 
     // Fill buffer
     buffer.push_overwrite(1);
@@ -80,7 +80,7 @@ mod __test__ {
 
   #[test]
   fn test_push_with_eviction() {
-    let buffer = LockFreeRingBuffer::new(2);
+    let buffer = LockFreeRingBuffer::<i32>::new(2);
 
     // Fill buffer
     assert_eq!(buffer.push(1), Ok(None));
@@ -97,7 +97,7 @@ mod __test__ {
 
   #[test]
   fn test_take_snapshot() {
-    let buffer = LockFreeRingBuffer::new(3);
+    let buffer = LockFreeRingBuffer::<i32>::new(3);
 
     buffer.push_overwrite(1);
     buffer.push_overwrite(2);
@@ -128,11 +128,11 @@ mod __test__ {
     // Clone first
     let cloned = buffer.clone();
 
-    // Original buffer snapshot
+    // Original buffer should still have items (refilled after cloning)
     let original_items = buffer.take_snapshot();
     assert_eq!(original_items, vec![1, 2]);
 
-    // Cloned buffer snapshot
+    // Cloned buffer should have the same items
     let cloned_items = cloned.take_snapshot();
     assert_eq!(cloned_items, vec![1, 2]);
 
@@ -142,7 +142,7 @@ mod __test__ {
 
   #[test]
   fn test_into_shared() {
-    let buffer = LockFreeRingBuffer::new(5);
+    let buffer = LockFreeRingBuffer::<i32>::new(5);
     buffer.push_overwrite(42);
 
     let shared = buffer.into_shared();
@@ -159,7 +159,7 @@ mod __test__ {
 
   #[test]
   fn test_serialization_deserialization() {
-    let buffer = LockFreeRingBuffer::new(3);
+    let buffer = LockFreeRingBuffer::<i32>::new(3);
     buffer.push_overwrite(1);
     buffer.push_overwrite(2);
     buffer.push_overwrite(3);
@@ -180,7 +180,7 @@ mod __test__ {
 
   #[test]
   fn test_concurrent_access() {
-    let buffer = LockFreeRingBuffer::new_shared(100);
+    let buffer = LockFreeRingBuffer::<i32>::new_shared(100);
     let num_threads = 10;
     let items_per_thread = 100;
 
@@ -219,7 +219,7 @@ mod __test__ {
 
   #[test]
   fn test_concurrent_producer_consumer() {
-    let buffer = LockFreeRingBuffer::new_shared(50);
+    let buffer = LockFreeRingBuffer::<i32>::new_shared(50);
     let num_producers = 5;
     let num_consumers = 3;
     let items_per_producer = 20;
@@ -271,7 +271,7 @@ mod __test__ {
 
   #[test]
   fn test_remaining_capacity() {
-    let buffer = LockFreeRingBuffer::new(5);
+    let buffer = LockFreeRingBuffer::<i32>::new(5);
 
     assert_eq!(buffer.remaining_capacity(), 5);
 
@@ -298,14 +298,14 @@ mod __test__ {
   #[test]
   fn test_large_capacity() {
     let capacity = 10000;
-    let buffer = LockFreeRingBuffer::new(capacity);
+    let buffer = LockFreeRingBuffer::<i32>::new(capacity);
 
     assert_eq!(buffer.capacity(), capacity);
     assert_eq!(buffer.remaining_capacity(), capacity);
 
     // Fill buffer
     for i in 0..capacity {
-      buffer.push_overwrite(i);
+      buffer.push_overwrite(i as i32);
     }
 
     assert!(buffer.is_full());
@@ -317,13 +317,13 @@ mod __test__ {
 
     // Check that items are in order (allowing for some reordering due to concurrent access)
     for i in 0..items.len() {
-      assert!(items[i] < capacity);
+      assert!(items[i] < capacity as i32);
     }
   }
 
   #[test]
   fn test_string_items() {
-    let buffer = LockFreeRingBuffer::new(3);
+    let buffer = LockFreeRingBuffer::<String>::new(3);
 
     buffer.push_overwrite("hello".to_string());
     buffer.push_overwrite("world".to_string());
@@ -337,13 +337,13 @@ mod __test__ {
 
   #[test]
   fn test_custom_struct() {
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
     struct TestItem {
       id: u32,
       data: String,
     }
 
-    let buffer = LockFreeRingBuffer::new(2);
+    let buffer = LockFreeRingBuffer::<TestItem>::new(2);
 
     let item1 = TestItem {
       id: 1,

@@ -5,8 +5,8 @@ use std::thread;
 use std::time::Instant;
 use tracing_subscriber::layer::SubscriberExt;
 
-use crate::buffer::RingBuffer;
 use crate::event::LogEvent;
+use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
 use crate::snapshot::SnapshotWriter;
 use crate::trace_layer::BufferLayer;
 
@@ -15,8 +15,8 @@ use std::sync::atomic;
 
 #[derive(Debug)]
 pub struct Trace {
-  sender: Sender<Message>,
-  level: atomic::AtomicU8,
+  pub sender: Sender<Message>,
+  pub level: atomic::AtomicU8,
 }
 
 #[derive(Debug)]
@@ -55,7 +55,10 @@ impl Trace {
     let subscriber = tracing_subscriber::Registry::default().with(layer);
     let _ = tracing::subscriber::set_global_default(subscriber); // ignore error if already set
 
-    Self { sender }
+    Self {
+      sender,
+      level: atomic::AtomicU8::new(0),
+    }
   }
 
   /// Returns a clone of the sender used to send messages into the tracing buffer.
@@ -66,12 +69,8 @@ impl Trace {
   /// # Example
   /// ```rust
   /// use ttlog::trace::{Trace, Message};
-  /// use ttlog::event::Event;
+  /// use ttlog::trace::Message::Event;
   ///
-  /// let trace_system = Trace::init(1024, 128);
-  /// let event = Event::new(1234567890, "INFO".to_string(), "test message".to_string(), "test_target".to_string());
-  /// let sender = trace_system.get_sender();
-  /// sender.send(Message::Event(event)).unwrap();
   /// ```
   pub fn get_sender(&self) -> Sender<Message> {
     self.sender.clone()
@@ -126,7 +125,7 @@ impl Trace {
     while let Ok(msg) = receiver.recv() {
       match msg {
         Message::Event(ev) => {
-          ring.push(ev);
+          let _ = ring.push(ev);
         },
         Message::SnapshotImmediate(reason) => {
           if !ring.is_empty() {

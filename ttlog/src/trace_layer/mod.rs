@@ -1,6 +1,7 @@
 mod __test__;
 
-use crate::{event::LogEvent, trace::Message};
+use crate::event::{EventBuilder, LogLevel};
+use crate::trace::Message;
 
 use chrono::Utc;
 use crossbeam_channel::{Sender, TrySendError};
@@ -51,21 +52,21 @@ where
   fn on_event(&self, event: &TracingEvent<'_>, _ctx: Context<'_, T>) {
     // Capture timestamp and level
     let ts = Utc::now().timestamp_millis() as u64;
-    let level = event.metadata().level().to_string();
+    let level = LogLevel::get_typo(event.metadata().level().as_str());
 
     // Extract the message field using a visitor
     let mut visitor = MessageVisitor::default();
     event.record(&mut visitor);
     let message = visitor.message.unwrap_or_else(|| "".to_string());
-    let target = event.metadata().target().to_string();
-    // let fields = event
-    //   .metadata()
-    //   .fields()
-    //   .iter()
-    //   .collect::<Vec<(&Field, &dyn std::fmt::Debug)>>();
+    let target = event.metadata().target();
 
     // Build a minimal Event
-    let new_event = LogEvent::new(ts, level, message, target);
+    let new_event = EventBuilder::new_with_capacity(2)
+      .timestamp_nanos(ts)
+      .message(message)
+      .target(target)
+      .level(level)
+      .build();
 
     // Attempt non-blocking send; drop if channel full
     match self.sender.try_send(Message::Event(new_event)) {

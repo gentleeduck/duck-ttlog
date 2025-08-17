@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod __test__ {
-  use crate::buffer::RingBuffer;
-  use crate::event::LogEvent;
+  use crate::event::{EventBuilder, LogEvent, LogLevel};
+  use crate::lf_buffer::LockFreeRingBuffer;
   use crate::snapshot::SnapshotWriter;
 
   #[test]
@@ -15,24 +15,31 @@ mod __test__ {
 
   #[test]
   fn test_snapshot_creation() {
-    let mut buffer = RingBuffer::new(5);
+    let buffer = LockFreeRingBuffer::new(5);
     let writer = SnapshotWriter::new("test_service");
 
-    // Add some events
-    buffer.push(LogEvent::new(
-      1000,
-      "INFO".to_string(),
-      "First".to_string(),
-      "target1".to_string(),
-    ));
-    buffer.push(LogEvent::new(
-      2000,
-      "WARN".to_string(),
-      "Second".to_string(),
-      "target2".to_string(),
-    ));
+    // Add some events using the new builder API
+    let event1 = EventBuilder::new_with_capacity(0)
+      .timestamp_nanos(1000)
+      .level(LogLevel::Info)
+      .target("target1")
+      .message("First".to_string())
+      .build();
 
-    let snapshot = writer.create_snapshot(&mut buffer, "test_reason").unwrap();
+    let event2 = EventBuilder::new_with_capacity(0)
+      .timestamp_nanos(2000)
+      .level(LogLevel::Warn)
+      .target("target2")
+      .message("Second".to_string())
+      .build();
+
+    buffer.push_overwrite(event1);
+    buffer.push_overwrite(event2);
+
+    let mut buffer_clone = buffer.clone();
+    let snapshot = writer
+      .create_snapshot(&mut buffer_clone, "test_reason")
+      .unwrap();
 
     assert_eq!(snapshot.service, "test_service");
     assert_eq!(snapshot.reason, "test_reason");
@@ -41,15 +48,15 @@ mod __test__ {
     assert_eq!(snapshot.events[1].message, "Second");
 
     // Buffer should be empty after snapshot
-    assert!(buffer.is_empty());
+    assert!(buffer_clone.is_empty());
   }
 
   #[test]
   fn test_snapshot_creation_empty_buffer() {
-    let mut buffer: RingBuffer<LogEvent> = RingBuffer::new(5);
+    let buffer: LockFreeRingBuffer<LogEvent> = LockFreeRingBuffer::new(5);
     let writer = SnapshotWriter::new("test_service");
 
-    let snapshot = writer.create_snapshot(&mut buffer, "empty_reason");
+    let snapshot = writer.create_snapshot(&mut buffer.clone(), "empty_reason");
 
     assert!(snapshot.is_none());
     assert!(buffer.is_empty());
@@ -57,18 +64,20 @@ mod __test__ {
 
   #[test]
   fn test_snapshot_metadata() {
-    let mut buffer = RingBuffer::new(3);
+    let buffer = LockFreeRingBuffer::new(3);
     let writer = SnapshotWriter::new("metadata_test");
 
-    buffer.push(LogEvent::new(
-      1000,
-      "INFO".to_string(),
-      "Test".to_string(),
-      "target".to_string(),
-    ));
+    let event = EventBuilder::new_with_capacity(0)
+      .timestamp_nanos(1000)
+      .level(LogLevel::Info)
+      .target("target")
+      .message("Test".to_string())
+      .build();
+
+    buffer.push_overwrite(event);
 
     let snapshot = writer
-      .create_snapshot(&mut buffer, "metadata_test")
+      .create_snapshot(&mut buffer.clone(), "metadata_test")
       .unwrap();
 
     assert_eq!(snapshot.service, "metadata_test");

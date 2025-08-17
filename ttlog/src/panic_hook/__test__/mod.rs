@@ -8,14 +8,16 @@ mod tests {
   /// Start a background thread that drains the receiver for a short while.
   /// This prevents the panic hook's blocking `send` from deadlocking tests.
   fn start_drain_thread(receiver: crossbeam_channel::Receiver<Message>) -> thread::JoinHandle<()> {
-    thread::spawn(move || loop {
-      match receiver.recv_timeout(Duration::from_millis(500)) {
-        Ok(_msg) => {
-          // keep draining
-          continue;
-        },
-        Err(RecvTimeoutError::Timeout) => break,
-        Err(RecvTimeoutError::Disconnected) => break,
+    thread::spawn(move || {
+      loop {
+        match receiver.recv_timeout(Duration::from_millis(500)) {
+          Ok(_msg) => {
+            // keep draining
+            continue;
+          },
+          Err(RecvTimeoutError::Timeout) => break,
+          Err(RecvTimeoutError::Disconnected) => break,
+        }
       }
     })
   }

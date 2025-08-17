@@ -1,76 +1,72 @@
 mod __test__;
 
-use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
-/// Represents the severity level of a log message.
-/// Compatible with standard logging conventions.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum LogLevel {
-  /// Trace-level logging for very detailed debugging
   Trace = 0,
-  /// Debug-level logging
   Debug = 1,
-  /// Informational logging
   Info = 2,
-  /// Warning-level logging
   Warn = 3,
-  /// Error-level logging
   Error = 4,
 }
 
-/// A single log entry or event, storing all metadata efficiently.
-#[derive(Debug, Clone)]
+impl LogLevel {
+  pub fn get_typo(level: &str) -> LogLevel {
+    match level {
+      "trace" => LogLevel::Trace,
+      "debug" => LogLevel::Debug,
+      "info" => LogLevel::Info,
+      "warn" => LogLevel::Warn,
+      "error" => LogLevel::Error,
+      // Why? - because there should be typo level
+      _ => LogLevel::Info,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
-  /// Timestamp of the event in nanoseconds
   pub timestamp_nanos: u64,
-  /// Log severity level
   pub level: LogLevel,
-  /// Logging target, e.g., module or subsystem
-  pub target: &'static str,
-  /// Main log message
+  pub target: Cow<'static, str>,
   pub message: String,
-  /// Structured fields attached to the event
+  #[serde(bound(
+    serialize = "SmallVec<[Field; 8]>: Serialize",
+    deserialize = "SmallVec<[Field; 8]>: Deserialize<'de>"
+  ))]
   pub fields: SmallVec<[Field; 8]>,
-  /// ID of the thread that emitted the event
   pub thread_id: u32,
-  /// Source file where the log originated
-  pub file: Option<&'static str>,
-  /// Line number in the source file
+  pub file: Option<Cow<'static, str>>,
   pub line: Option<u32>,
 }
 
+impl<'a> fmt::Display for LogEvent {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "{}", self.message)
+  }
+}
+
 /// Represents a structured key/value field attached to a log event.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Field {
-  /// Field name
-  pub key: &'static str,
-  /// Field value
+  pub key: Cow<'static, str>,
   pub value: FieldValue,
 }
 
-/// The value of a field, optimized for common types to avoid heap allocations.
-/// Supports static strings, owned strings, numeric types, booleans, and debug/display text.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "value")]
 pub enum FieldValue {
-  /// Static string
-  Str(&'static str),
-  /// Owned string
+  Str(Cow<'static, str>),
   String(String),
-  /// Signed 64-bit integer
   I64(i64),
-  /// Unsigned 64-bit integer
   U64(u64),
-  /// 64-bit floating point number
   F64(f64),
-  /// Boolean value
   Bool(bool),
-  /// Arbitrary debug output stored as a string
   Debug(String),
-  /// Arbitrary display output stored as a string
   Display(String),
 }
 
@@ -137,95 +133,25 @@ impl EventBuilder {
   /// Adds a key/value field to the log event.
   #[inline]
   pub fn field(&mut self, key: &'static str, value: FieldValue) -> &mut Self {
-    self.fields.push(Field { key, value });
+    self.fields.push(Field {
+      key: Cow::Borrowed(key),
+      value,
+    });
     self
   }
 
   /// Builds the `LogEvent` consuming the builder.
   #[inline]
-  pub fn build(self) -> LogEvent {
+  pub fn build(&self) -> LogEvent {
     LogEvent {
       timestamp_nanos: self.timestamp_nanos,
       level: self.level,
-      target: self.target,
-      message: self.message,
-      fields: self.fields,
+      target: Cow::Borrowed(self.target),
+      message: self.message.clone(),
+      fields: self.fields.clone(),
       thread_id: 0,
       file: None,
       line: None,
     }
-  }
-}
-
-impl Serialize for FieldValue {
-  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-  where
-    S: serde::Serializer,
-  {
-    match self {
-      FieldValue::Str(s) => serializer.serialize_str(s),
-      FieldValue::String(s) => serializer.serialize_str(s),
-      FieldValue::I64(i) => serializer.serialize_i64(*i),
-      FieldValue::U64(u) => serializer.serialize_u64(*u),
-      FieldValue::F64(f) => serializer.serialize_f64(*f),
-      FieldValue::Bool(b) => serializer.serialize_bool(*b),
-      FieldValue::Debug(s) => serializer.serialize_str(s),
-      FieldValue::Display(s) => serializer.serialize_str(s),
-    }
-  }
-}
-
-/// Visitor for deserializing `FieldValue`.
-struct FieldValueVisitor;
-
-impl<'de> Visitor<'de> for FieldValueVisitor {
-  type Value = FieldValue;
-
-  fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-    formatter.write_str("a valid FieldValue type")
-  }
-
-  fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(FieldValue::String(v.to_string()))
-  }
-
-  fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(FieldValue::I64(v))
-  }
-
-  fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(FieldValue::U64(v))
-  }
-
-  fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(FieldValue::F64(v))
-  }
-
-  fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E>
-  where
-    E: de::Error,
-  {
-    Ok(FieldValue::Bool(v))
-  }
-}
-
-impl<'de> Deserialize<'de> for FieldValue {
-  fn deserialize<D>(deserializer: D) -> Result<FieldValue, D::Error>
-  where
-    D: serde::Deserializer<'de>,
-  {
-    deserializer.deserialize_any(FieldValueVisitor)
   }
 }

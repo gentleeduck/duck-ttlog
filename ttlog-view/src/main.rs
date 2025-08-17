@@ -1,12 +1,12 @@
 mod snapshot_read;
 mod utils;
 
-use crate::snapshot_read::SnapshotFile;
-use crate::utils::{generate_ascii_art, print_snapshots};
-use colored::*;
-use inquire::Select;
-use std::error::Error;
-use std::fs;
+// use crate::snapshot_read::SnapshotFile;
+// use crate::utils::{generate_ascii_art, print_snapshots};
+// use colored::*;
+// use inquire::Select;
+// use std::error::Error;
+// use std::fs;
 
 // fn main() -> Result<(), Box<dyn Error>> {
 //   // Clear screen
@@ -109,26 +109,19 @@ use std::fs;
 // }
 
 /// Macro to create a vector of bytes
-macro_rules! wildduck {
-  ( $( $x:expr ),* ) => {
-    {
-      let mut temp = Vec::<_>::new();
-      $(
-          temp.push($x);
-      )*
-      temp
-    }
-  };
-}
-
-pub trait HelloMacro {
-  fn hello_macro();
-}
-use ttlog_macros::HelloMacro;
-
-#[derive(HelloMacro)]
-struct Duck;
+// macro_rules! wildduck {
+//   ( $( $x:expr ),* ) => {
+//     {
+//       let mut temp = Vec::<_>::new();
+//       $(
+//           temp.push($x);
+//       )*
+//       temp
+//     }
+//   };
+// }
+use ttlog_event::info;
 
 fn main() {
-  Duck::hello_macro();
+  info!(user_id = user_id, username = username, "User logged in");
 }

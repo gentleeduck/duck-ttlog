@@ -6,33 +6,17 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 
-use crate::buffer::RingBuffer;
 use crate::event::LogEvent;
+use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
 
 /// A snapshot bundles metadata together with a sequence of events.
-///
-/// A `Snapshot` is intended to be a compact, self-contained representation
-/// of the recent runtime state of the service. It contains:
-///
-/// * `service` — logical name of the service creating the snapshot.
-/// * `hostname` — platform host the snapshot was taken on.
-/// * `pid` — process id of the running process that created the snapshot.
-/// * `created_at` — timestamp string (formatted `YYYYMMDDHHMMSS`) when snapshot was created.
-/// * `reason` — human-readable reason for the snapshot (e.g., `"panic"`, `"manual"`).
-/// * `events` — the captured events from the ring buffer (oldest → newest).
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
-  /// Name of the service (e.g., `"ttlog"`).
   pub service: String,
-  /// Hostname where the snapshot was captured.
   pub hostname: String,
-  /// OS process id that created the snapshot.
   pub pid: u32,
-  /// Snapshot creation timestamp formatted as `YYYYMMDDHHMMSS`.
   pub created_at: String,
-  /// Reason for taking the snapshot (free-form string).
   pub reason: String,
-  /// Captured events (in insertion order).
   pub events: Vec<LogEvent>,
 }
 

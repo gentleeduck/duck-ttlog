@@ -3,6 +3,8 @@ mod __test__ {
 
   // tests/log_event_tests.rs
 
+  use std::borrow::Cow;
+
   use serde_json;
 
   use crate::event::{EventBuilder, FieldValue, LogLevel};
@@ -16,7 +18,7 @@ mod __test__ {
       .target("test_module")
       .message("Hello World".into())
       .field("key1", FieldValue::I64(42))
-      .field("key2", FieldValue::Str("static_str"));
+      .field("key2", FieldValue::Str(Cow::Borrowed("static_str")));
 
     let event = builder.build();
 
@@ -31,14 +33,14 @@ mod __test__ {
     assert_eq!(event.fields[1].key, "key2");
     assert!(matches!(
       event.fields[1].value,
-      FieldValue::Str("static_str")
+      FieldValue::Str(Cow::Borrowed("static_str"))
     ));
   }
 
   #[test]
   fn test_field_value_serialization() {
     let field_values = vec![
-      FieldValue::Str("static"),
+      FieldValue::Str(Cow::Borrowed("static")),
       FieldValue::String("owned".to_string()),
       FieldValue::I64(-123),
       FieldValue::U64(456),
@@ -52,34 +54,63 @@ mod __test__ {
       let serialized = serde_json::to_string(&value).expect("Failed to serialize");
       let deserialized: FieldValue =
         serde_json::from_str(&serialized).expect("Failed to deserialize");
+
       match value {
         FieldValue::Str(s) => {
-          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+          if let FieldValue::Str(ds) = deserialized {
+            assert_eq!(ds, s);
+          } else {
+            panic!("Expected Str variant");
+          }
         },
         FieldValue::String(ref s) => {
-          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+          if let FieldValue::String(ds) = deserialized {
+            assert_eq!(ds, *s);
+          } else {
+            panic!("Expected String variant");
+          }
         },
         FieldValue::I64(i) => {
-          assert!(matches!(deserialized, FieldValue::I64(d) if d == i));
+          if let FieldValue::I64(d) = deserialized {
+            assert_eq!(d, i);
+          } else {
+            panic!("Expected I64 variant");
+          }
         },
         FieldValue::U64(u) => {
-          assert!(matches!(deserialized, FieldValue::U64(d) if d == u));
+          if let FieldValue::U64(d) = deserialized {
+            assert_eq!(d, u);
+          } else {
+            panic!("Expected U64 variant");
+          }
         },
         FieldValue::F64(f) => {
           if let FieldValue::F64(d) = deserialized {
             assert!((d - f).abs() < f64::EPSILON);
           } else {
-            panic!("Expected F64");
+            panic!("Expected F64 variant");
           }
         },
         FieldValue::Bool(b) => {
-          assert!(matches!(deserialized, FieldValue::Bool(d) if d == b));
+          if let FieldValue::Bool(d) = deserialized {
+            assert_eq!(d, b);
+          } else {
+            panic!("Expected Bool variant");
+          }
         },
         FieldValue::Debug(ref s) => {
-          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+          if let FieldValue::Debug(ds) = deserialized {
+            assert_eq!(ds, *s);
+          } else {
+            panic!("Expected Debug variant");
+          }
         },
         FieldValue::Display(ref s) => {
-          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+          if let FieldValue::Display(ds) = deserialized {
+            assert_eq!(ds, *s);
+          } else {
+            panic!("Expected Display variant");
+          }
         },
       }
     }

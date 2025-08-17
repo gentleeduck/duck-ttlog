@@ -759,6 +759,9 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "socket2"
@@ -938,6 +941,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ttlog-event"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_cbor",
+ "smallvec",
+ "syn",
+ "ttlog",
+]
+
+[[package]]
 name = "ttlog-filereader"
 version = "0.1.0"
 dependencies = [
@@ -945,14 +961,6 @@ dependencies = [
  "serde",
  "tracing",
  "ttlog",
-]
-
-[[package]]
-name = "ttlog-macros"
-version = "0.1.0"
-dependencies = [
- "quote",
- "syn",
 ]
 
 [[package]]
@@ -983,10 +991,11 @@ dependencies = [
  "regex",
  "serde",
  "serde_cbor",
+ "smallvec",
  "terminal_size",
  "tracing",
  "ttlog",
- "ttlog-macros",
+ "ttlog-event",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ members = [
   "examples/ttlog-server", 
   "examples/ttlog-complex",
   "examples/ttlog-filereader", 
-  "ttlog-macros",
+  "ttlog-event",
 ]
 
 [workspace.package]
@@ -18,5 +18,6 @@ license = "MIT"
 repository = "https://github.com/yourusername/ttlog"
 
 [workspace.dependencies]
-# Add common dependencies here if needed 
-
+serde = { version = "1.0", features = ["derive"] }
+serde_cbor = "0.11.2"
+smallvec = { version = "1.15.1", features = ["serde"] }
