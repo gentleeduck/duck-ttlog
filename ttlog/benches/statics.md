@@ -1,4 +1,4 @@
-# TTLog — Benchmark Report (Markdown)
+# TTLog — Benchmark Report 
 
 ## Executive summary
 
