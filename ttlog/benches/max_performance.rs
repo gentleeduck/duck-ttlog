@@ -723,7 +723,10 @@ fn create_performance_event(thread_id: u32, event_id: u64) -> LogEvent {
       .as_nanos() as u64,
     level: LogLevel::Info,
     target: Cow::Borrowed("max_performance"),
-    message: format!("Performance event {} from thread {}", event_id, thread_id),
+    message: Cow::Owned(format!(
+      "Performance event {} from thread {}",
+      event_id, thread_id
+    )),
     fields: smallvec::smallvec![
       Field {
         key: "thread_id".into(),
@@ -756,7 +759,7 @@ fn create_large_event(event_id: u64) -> LogEvent {
       .as_nanos() as u64,
     level: LogLevel::Info,
     target: Cow::Borrowed("large_event"),
-    message: format!("Large event {} with extensive fields", event_id),
+    message: Cow::Owned(format!("Large event {} with extensive fields", event_id)),
     fields: smallvec::smallvec![
       Field {
         key: "event_id".into(),

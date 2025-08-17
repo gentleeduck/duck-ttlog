@@ -3,8 +3,6 @@ mod tests {
   use crate::trace::Message;
   use crate::trace_layer::BufferLayer;
   use crossbeam_channel::bounded;
-  use tracing::{error, info, warn};
-  use tracing_subscriber::{layer::SubscriberExt, Registry};
 
   #[test]
   fn test_buffer_layer_new() {

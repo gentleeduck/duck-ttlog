@@ -142,7 +142,7 @@ impl CPUStressTest {
           .as_nanos() as u64,
         level: LogLevel::Info,
         target: Cow::Borrowed("cpu_stress"),
-        message: format!("Heavy computation result: {}", result),
+        message: Cow::Owned(format!("Heavy computation result: {}", result)),
         fields: smallvec::smallvec![
           Field {
             key: "iteration".into(),
@@ -194,7 +194,7 @@ impl CPUStressTest {
               .as_nanos() as u64,
             level: LogLevel::Info,
             target: Cow::Borrowed("prime_stress"),
-            message: format!("Found prime number: {}", num),
+            message: Cow::Owned(format!("Found prime number: {}", num)),
             fields: smallvec::smallvec![
               Field {
                 key: "prime_count".into(),
@@ -462,10 +462,10 @@ fn create_extreme_event(thread_id: u32, event_id: u64) -> LogEvent {
       .as_nanos() as u64,
     level: LogLevel::Info,
     target: Cow::Borrowed("extreme_stress"),
-    message: format!(
+    message: Cow::Owned(format!(
       "Extreme stress event {} from thread {}",
       event_id, thread_id
-    ),
+    )),
     fields: smallvec::smallvec![
       Field {
         key: "thread_id".into(),
@@ -510,10 +510,10 @@ fn create_network_stress_event(source_node: u32, message_id: u64) -> LogEvent {
       .as_nanos() as u64,
     level: LogLevel::Info,
     target: Cow::Borrowed("network_stress"),
-    message: format!(
+    message: Cow::Owned(format!(
       "Network stress message {} from node {}",
       message_id, source_node
-    ),
+    )),
     fields: smallvec::smallvec![
       Field {
         key: "source_node".into(),
@@ -546,10 +546,10 @@ fn create_congestion_event(source_node: u32, target_node: u32, message_id: u64) 
       .as_nanos() as u64,
     level: LogLevel::Warn,
     target: Cow::Borrowed("network_congestion"),
-    message: format!(
+    message: Cow::Owned(format!(
       "Congestion message {} from {} to {}",
       message_id, source_node, target_node
-    ),
+    )),
     fields: smallvec::smallvec![
       Field {
         key: "source_node".into(),

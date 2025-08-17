@@ -15,9 +15,9 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct LockFreeRingBuffer<T> {
   /// Battle-tested ArrayQueue for lock-free operations
-  pub queue: ArrayQueue<T>,
+  queue: ArrayQueue<T>,
   /// Maximum capacity of the buffer
-  pub capacity: usize,
+  capacity: usize,
 }
 
 impl<T> LockFreeRingBuffer<T> {

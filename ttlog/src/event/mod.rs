@@ -33,14 +33,14 @@ pub struct LogEvent {
   pub timestamp_nanos: u64,
   pub level: LogLevel,
   pub target: Cow<'static, str>,
-  pub message: String,
+  pub message: Cow<'static, str>,
   #[serde(bound(
     serialize = "SmallVec<[Field; 8]>: Serialize",
     deserialize = "SmallVec<[Field; 8]>: Deserialize<'de>"
   ))]
   pub fields: SmallVec<[Field; 8]>,
   pub thread_id: u32,
-  pub file: Option<Cow<'static, str>>,
+  pub file: Option<Box<str>>,
   pub line: Option<u32>,
 }
 
@@ -57,25 +57,36 @@ pub struct Field {
   pub value: FieldValue,
 }
 
+#[repr(u8)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum FieldValue {
   Str(Cow<'static, str>),
   String(String),
-  I64(i64),
-  U64(u64),
-  F64(f64),
-  Bool(bool),
   Debug(String),
   Display(String),
+  Null,
+  None,
+  Bool(bool),
+  U8(u8),
+  U16(u16),
+  U32(u32),
+  U64(u64),
+  I8(i8),
+  I16(i16),
+  I32(i32),
+  I64(i64),
+  F32(f32),
+  F64(f64),
 }
 
 /// Builder pattern for constructing `LogEvent` instances efficiently.
+#[derive(Debug, Clone)]
 pub struct EventBuilder {
   timestamp_nanos: u64,
   level: LogLevel,
-  target: &'static str,
-  message: String,
+  target: Cow<'static, str>,
+  message: Cow<'static, str>,
   fields: SmallVec<[Field; 8]>,
 }
 
@@ -96,8 +107,8 @@ impl EventBuilder {
     Self {
       timestamp_nanos: 0,
       level: LogLevel::Info,
-      target: "",
-      message: String::new(),
+      target: "".into(),
+      message: "".into(),
       fields: SmallVec::with_capacity(field_count),
     }
   }
@@ -118,14 +129,14 @@ impl EventBuilder {
 
   /// Sets the logging target.
   #[inline]
-  pub fn target(&mut self, target: &'static str) -> &mut Self {
+  pub fn target(&mut self, target: Cow<'static, str>) -> &mut Self {
     self.target = target;
     self
   }
 
   /// Sets the main log message.
   #[inline]
-  pub fn message(&mut self, message: String) -> &mut Self {
+  pub fn message(&mut self, message: Cow<'static, str>) -> &mut Self {
     self.message = message;
     self
   }
@@ -142,16 +153,25 @@ impl EventBuilder {
 
   /// Builds the `LogEvent` consuming the builder.
   #[inline]
-  pub fn build(&self) -> LogEvent {
+  pub fn build(&mut self) -> LogEvent {
     LogEvent {
       timestamp_nanos: self.timestamp_nanos,
       level: self.level,
-      target: Cow::Borrowed(self.target),
-      message: self.message.clone(),
+      target: std::mem::take(&mut self.target),
+      message: std::mem::take(&mut self.message),
       fields: self.fields.clone(),
       thread_id: 0,
       file: None,
       line: None,
     }
+  }
+
+  pub fn reset(&mut self) -> &mut Self {
+    self.timestamp_nanos = 0;
+    self.level = LogLevel::Info;
+    self.target = Cow::Borrowed("");
+    self.message = Cow::Borrowed("");
+    self.fields.clear();
+    self
   }
 }

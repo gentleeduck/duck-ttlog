@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
+use std::{borrow::Cow, sync::Arc};
 
 use ttlog::{
   event::{EventBuilder, Field, FieldValue, LogEvent, LogLevel},
@@ -84,7 +84,7 @@ fn test_event_creation() {
       timestamp_nanos: i as u64,
       level: LogLevel::Info,
       target: "test".into(),
-      message: format!("Event {}", i),
+      message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![],
       thread_id: 1,
       file: Some("test.rs".into()),
@@ -102,8 +102,8 @@ fn test_event_creation() {
     let _event = EventBuilder::new_with_capacity(4)
       .timestamp_nanos(i as u64)
       .level(LogLevel::Info)
-      .target("test")
-      .message(format!("Event {}", i))
+      .target(Cow::Borrowed("test"))
+      .message(Cow::Owned(format!("Event {}", i)))
       .build();
   }
   let builder_time = start.elapsed();
@@ -118,7 +118,7 @@ fn test_event_creation() {
       timestamp_nanos: i as u64,
       level: LogLevel::Info,
       target: "test".into(),
-      message: format!("Event {}", i),
+      message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![
         Field {
           key: "user_id".into(),
@@ -243,7 +243,7 @@ fn test_memory_efficiency() {
       timestamp_nanos: i as u64,
       level: LogLevel::Info,
       target: "test".into(),
-      message: format!("Event {}", i),
+      message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![],
       thread_id: 1,
       file: Some("test.rs".into()),
@@ -274,7 +274,7 @@ fn test_memory_efficiency() {
       timestamp_nanos: i as u64,
       level: LogLevel::Info,
       target: "test".into(),
-      message: format!("Event {}", i),
+      message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![],
       thread_id: 1,
       file: Some("test.rs".into()),

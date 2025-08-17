@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod __test__ {
 
+  use std::borrow::Cow;
+
   use crate::event::{EventBuilder, LogLevel};
   use crate::trace::{Message, Trace};
 
@@ -21,8 +23,8 @@ mod __test__ {
     let event = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(1000)
       .level(LogLevel::Info)
-      .target("test_target")
-      .message("Test message".to_string())
+      .target(Cow::Borrowed("test_target"))
+      .message(Cow::Borrowed("Test message"))
       .build();
 
     let result = sender.send(Message::Event(event));
@@ -43,8 +45,8 @@ mod __test__ {
     let event = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(1000)
       .level(LogLevel::Info)
-      .target("test_target")
-      .message("Test message".to_string())
+      .target(Cow::Borrowed("test_target"))
+      .message(Cow::Borrowed("Test message"))
       .build();
 
     let messages = vec![

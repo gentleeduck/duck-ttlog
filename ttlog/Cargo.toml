@@ -17,6 +17,7 @@ crossbeam-queue = "0.3.12"
 serde = { workspace = true }
 serde_cbor = { workspace = true }
 smallvec = { workspace = true }
+arrayvec = { workspace = true }
 criterion = "0.7.0"
 tabled = "0.15"
 

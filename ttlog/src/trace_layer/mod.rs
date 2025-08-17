@@ -1,5 +1,7 @@
 mod __test__;
 
+use std::borrow::Cow;
+
 use crate::event::{EventBuilder, LogLevel};
 use crate::trace::Message;
 
@@ -57,14 +59,14 @@ where
     // Extract the message field using a visitor
     let mut visitor = MessageVisitor::default();
     event.record(&mut visitor);
-    let message = visitor.message.unwrap_or_else(|| "".to_string());
-    let target = event.metadata().target();
+    let message: String = visitor.message.unwrap_or_default();
+    let target: &str = event.metadata().target();
 
     // Build a minimal Event
     let new_event = EventBuilder::new_with_capacity(2)
       .timestamp_nanos(ts)
-      .message(message)
-      .target(target)
+      .message(Cow::Owned(message))
+      .target(Cow::Borrowed(target))
       .level(level)
       .build();
 

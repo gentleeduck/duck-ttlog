@@ -15,8 +15,8 @@ mod __test__ {
     builder
       .timestamp_nanos(12345)
       .level(LogLevel::Debug)
-      .target("test_module")
-      .message("Hello World".into())
+      .target(Cow::Borrowed("test_module"))
+      .message(Cow::Borrowed("Hello World"))
       .field("key1", FieldValue::I64(42))
       .field("key2", FieldValue::Str(Cow::Borrowed("static_str")));
 
@@ -55,6 +55,23 @@ mod __test__ {
       let deserialized: FieldValue =
         serde_json::from_str(&serialized).expect("Failed to deserialize");
 
+      // Str(Cow<'static, str>),
+      // String(String),
+      // Debug(String),
+      // Display(String),
+      // Null,
+      // None,
+      // Bool(bool),
+      // U8(u8),
+      // U16(u16),
+      // U32(u32),
+      // U64(u64),
+      // I8(i8),
+      // I16(i16),
+      // I32(i32),
+      // I64(i64),
+      // F32(f32),
+      // F64(f64),
       match value {
         FieldValue::Str(s) => {
           if let FieldValue::Str(ds) = deserialized {
@@ -91,6 +108,13 @@ mod __test__ {
             panic!("Expected F64 variant");
           }
         },
+        FieldValue::I8(i) => {
+          if let FieldValue::I8(d) = deserialized {
+            assert_eq!(d, i);
+          } else {
+            panic!("Expected I8 variant");
+          }
+        },
         FieldValue::Bool(b) => {
           if let FieldValue::Bool(d) = deserialized {
             assert_eq!(d, b);
@@ -110,6 +134,63 @@ mod __test__ {
             assert_eq!(ds, *s);
           } else {
             panic!("Expected Display variant");
+          }
+        },
+        FieldValue::None => {
+          if let FieldValue::None = deserialized {
+            assert!(true);
+          } else {
+            panic!("Expected None variant");
+          }
+        },
+        FieldValue::Null => {
+          if let FieldValue::Null = deserialized {
+            assert!(true);
+          } else {
+            panic!("Expected Null variant");
+          }
+        },
+
+        FieldValue::U8(u) => {
+          if let FieldValue::U8(d) = deserialized {
+            assert_eq!(d, u);
+          } else {
+            panic!("Expected U8 variant");
+          }
+        },
+        FieldValue::U16(u) => {
+          if let FieldValue::U16(d) = deserialized {
+            assert_eq!(d, u);
+          } else {
+            panic!("Expected U16 variant");
+          }
+        },
+        FieldValue::U32(u) => {
+          if let FieldValue::U32(d) = deserialized {
+            assert_eq!(d, u);
+          } else {
+            panic!("Expected U32 variant");
+          }
+        },
+        FieldValue::F32(i) => {
+          if let FieldValue::F32(d) = deserialized {
+            assert_eq!(d, i);
+          } else {
+            panic!("Expected F32 variant");
+          }
+        },
+        FieldValue::I16(i) => {
+          if let FieldValue::I16(d) = deserialized {
+            assert_eq!(d, i);
+          } else {
+            panic!("Expected I16 variant");
+          }
+        },
+        FieldValue::I32(i) => {
+          if let FieldValue::I32(d) = deserialized {
+            assert_eq!(d, i);
+          } else {
+            panic!("Expected I32 variant");
           }
         },
       }

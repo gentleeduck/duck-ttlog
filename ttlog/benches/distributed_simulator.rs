@@ -78,7 +78,10 @@ impl DatabaseNode {
           .as_nanos() as u64,
         level: LogLevel::Info,
         target: Cow::Borrowed("database_node"),
-        message: format!("Database operation: {} {} = {}", operation, key, value),
+        message: Cow::Owned(format!(
+          "Database operation: {} {} = {}",
+          operation, key, value
+        )),
         fields: smallvec::smallvec![
           Field {
             key: "node_id".into(),
@@ -182,7 +185,10 @@ impl Microservice {
           LogLevel::Warn
         },
         target: Cow::Borrowed("microservice"),
-        message: format!("API request: {} {} -> {}", method, endpoint, status_code),
+        message: Cow::Owned(format!(
+          "API request: {} {} -> {}",
+          method, endpoint, status_code
+        )),
         fields: smallvec::smallvec![
           Field {
             key: "service_id".into(),
@@ -269,7 +275,10 @@ impl MessageQueue {
               .as_nanos() as u64,
             level: LogLevel::Info,
             target: Cow::Borrowed("message_queue"),
-            message: format!("Produced message {} from producer {}", i, producer_id),
+            message: Cow::Owned(format!(
+              "Produced message {} from producer {}",
+              i, producer_id
+            )),
             fields: smallvec::smallvec![
               Field {
                 key: "queue_id".into(),
@@ -325,7 +334,7 @@ impl MessageQueue {
                 .as_nanos() as u64,
               level: LogLevel::Info,
               target: Cow::Borrowed("message_queue"),
-              message: format!("Consumed message by consumer {}", consumer_id),
+              message: Cow::Owned(format!("Consumed message by consumer {}", consumer_id)),
               fields: smallvec::smallvec![
                 Field {
                   key: "queue_id".into(),
@@ -447,7 +456,7 @@ impl DistributedCache {
           .as_nanos() as u64,
         level: LogLevel::Info,
         target: Cow::Borrowed("distributed_cache"),
-        message: format!("Cache operation: {} {}", operation, key),
+        message: Cow::Owned(format!("Cache operation: {} {}", operation, key)),
         fields: smallvec::smallvec![
           Field {
             key: "cache_id".into(),

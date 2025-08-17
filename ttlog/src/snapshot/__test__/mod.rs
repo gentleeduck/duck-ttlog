@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod __test__ {
+  use std::borrow::Cow;
+
   use crate::event::{EventBuilder, LogEvent, LogLevel};
   use crate::lf_buffer::LockFreeRingBuffer;
   use crate::snapshot::SnapshotWriter;
@@ -18,22 +20,24 @@ mod __test__ {
     let buffer = LockFreeRingBuffer::new(5);
     let writer = SnapshotWriter::new("test_service");
 
+    let mut builder = EventBuilder::new_with_capacity(0);
     // Add some events using the new builder API
-    let event1 = EventBuilder::new_with_capacity(0)
+    let event1 = builder
       .timestamp_nanos(1000)
       .level(LogLevel::Info)
-      .target("target1")
-      .message("First".to_string())
+      .target(Cow::Borrowed("target1"))
+      .message(Cow::Borrowed("First"))
       .build();
+
+    buffer.push_overwrite(event1);
 
     let event2 = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(2000)
       .level(LogLevel::Warn)
-      .target("target2")
-      .message("Second".to_string())
+      .target(Cow::Borrowed("target2"))
+      .message(Cow::Borrowed("Second"))
       .build();
 
-    buffer.push_overwrite(event1);
     buffer.push_overwrite(event2);
 
     let mut buffer_clone = buffer.clone();
@@ -70,8 +74,8 @@ mod __test__ {
     let event = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(1000)
       .level(LogLevel::Info)
-      .target("target")
-      .message("Test".to_string())
+      .target(Cow::Borrowed("target"))
+      .message(Cow::Borrowed("Test"))
       .build();
 
     buffer.push_overwrite(event);

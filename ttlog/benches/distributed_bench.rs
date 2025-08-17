@@ -55,7 +55,7 @@ impl DistributedNode {
               level: LogLevel::Info,
               // target: Cow::Borrowed(format!("node_{}_worker_{}", node_id, worker_id).as_str()),
               target: Cow::Owned(format!("node_{}_worker_{}", node_id, worker_id).to_string()),
-              message: format!("Distributed event {} from worker {}", i, worker_id),
+              message: Cow::Owned(format!("Distributed event {} from worker {}", i, worker_id)),
               fields: smallvec::smallvec![
                 Field {
                   key: "node_id".into(),
@@ -588,10 +588,10 @@ fn create_heavy_event(thread_id: u32, event_id: u64) -> LogEvent {
       .as_nanos() as u64,
     level: LogLevel::Info,
     target: Cow::Borrowed("extreme_bench"),
-    message: format!(
+    message: Cow::Owned(format!(
       "Heavy distributed event {} from thread {}",
       event_id, thread_id
-    ),
+    )),
     fields: smallvec::smallvec![
       Field {
         key: "thread_id".into(),
@@ -640,7 +640,7 @@ fn create_network_event() -> LogEvent {
       .as_nanos() as u64,
     level: LogLevel::Info,
     target: Cow::Borrowed("network_sim"),
-    message: "Network communication event".to_string(),
+    message: Cow::Owned("Network communication event".to_string()),
     fields: smallvec::smallvec![
       Field {
         key: "source_node".into(),
