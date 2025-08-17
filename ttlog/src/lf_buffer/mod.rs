@@ -1,22 +1,8 @@
+mod __test__;
+
 use crossbeam_queue::ArrayQueue;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-/**
-
-# Example
-```rust
-let buffer = LockFreeRingBuffer::new(10);
-let shared = buffer.into_shared();
-
-// Method 2: Create already wrapped
-let shared = LockFreeRingBuffer::new_shared(10);
-
-// Method 3: Standard library way (still works)
-let shared = Arc::new(LockFreeRingBuffer::new(10));
-```
-
-*/
 
 /// A lock-free ring buffer using crossbeam's battle-tested ArrayQueue.
 ///
@@ -42,9 +28,10 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
-  /// let buffer: LockFreeRingBuffer<i32> = LockFreeRingBuffer::new(10);
-  /// assert_eq!(buffer.len(), 0);
-  /// assert_eq!(buffer.capacity(), 10);
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
+  /// let buffer = LockFreeRingBuffer::<i32>::new(10);
+  ///  assert_eq!(buffer.len(), 0);
+  ///  assert_eq!(buffer.capacity(), 10);
   /// ```
   pub fn new(capacity: usize) -> Self {
     Self {
@@ -68,6 +55,7 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
   /// let buffer = LockFreeRingBuffer::new(2);
   ///
   /// assert!(buffer.push(1).unwrap().is_none()); // No eviction
@@ -111,6 +99,7 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
   /// let buffer = LockFreeRingBuffer::new(3);
   /// buffer.push_overwrite(1);
   /// buffer.push_overwrite(2);
@@ -133,6 +122,7 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
   /// let buffer = LockFreeRingBuffer::new(3);
   /// buffer.push_overwrite(1);
   /// buffer.push_overwrite(2);
@@ -157,6 +147,7 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
   /// let buffer = LockFreeRingBuffer::new(5);
   /// assert_eq!(buffer.len(), 0);
   ///
@@ -172,6 +163,7 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
   /// let buffer = LockFreeRingBuffer::new(5);
   /// assert!(buffer.is_empty());
   ///
@@ -187,6 +179,7 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
   /// let buffer = LockFreeRingBuffer::new(2);
   /// assert!(!buffer.is_full());
   ///
@@ -203,7 +196,8 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
-  /// let buffer = LockFreeRingBuffer::new(10);
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
+  /// let buffer = LockFreeRingBuffer::<i32>::new(10);
   /// assert_eq!(buffer.capacity(), 10);
   /// ```
   #[inline]
@@ -228,10 +222,19 @@ impl<T: Clone> Clone for LockFreeRingBuffer<T> {
   fn clone(&self) -> Self {
     let new_buffer = Self::new(self.capacity);
 
-    // Take a snapshot and repopulate the new buffer
-    // Note: This is not atomic with respect to concurrent operations
-    let items = self.take_snapshot();
-    for item in items {
+    // Take a snapshot: pop all items
+    let mut temp = Vec::with_capacity(self.len());
+    while let Some(item) = self.queue.pop() {
+      temp.push(item);
+    }
+
+    // Refill the original buffer immediately
+    for item in &temp {
+      self.push_overwrite(item.clone());
+    }
+
+    // Populate the new buffer
+    for item in temp {
       new_buffer.push_overwrite(item);
     }
 
@@ -245,7 +248,8 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
-  /// let buffer = LockFreeRingBuffer::new(10);
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
+  /// let buffer = LockFreeRingBuffer::<i32>::new(10);
   /// let shared_buffer = buffer.into_shared();
   /// // Now can be shared across threads
   /// ```
@@ -257,7 +261,8 @@ impl<T> LockFreeRingBuffer<T> {
   ///
   /// # Example
   /// ```rust
-  /// let shared_buffer = LockFreeRingBuffer::new_shared(10);
+  /// use ttlog::lf_buffer::LockFreeRingBuffer;
+  /// let shared_buffer = LockFreeRingBuffer::<i32>::new_shared(10);
   /// // Ready to use across multiple threads
   /// ```
   pub fn new_shared(capacity: usize) -> Arc<Self> {
