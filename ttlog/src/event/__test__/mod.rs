@@ -1,189 +1,121 @@
 #[cfg(test)]
 mod __test__ {
 
-  use crate::event::LogEvent;
+  // tests/log_event_tests.rs
+
+  use serde_json;
+
+  use crate::event::{EventBuilder, FieldValue, LogLevel};
 
   #[test]
-  fn test_event_creation() {
-    let event = LogEvent::new(
-      1234567890,
-      "INFO".to_string(),
-      "Test message".to_string(),
-      "test_target".to_string(),
-    );
+  fn test_event_builder_basic() {
+    let mut builder = EventBuilder::new_with_capacity(4);
+    builder
+      .timestamp_nanos(12345)
+      .level(LogLevel::Debug)
+      .target("test_module")
+      .message("Hello World".into())
+      .field("key1", FieldValue::I64(42))
+      .field("key2", FieldValue::Str("static_str"));
 
-    assert_eq!(event.timestamp, 1234567890);
-    assert_eq!(event.level, "INFO");
-    assert_eq!(event.message, "Test message");
-    assert_eq!(event.target, "test_target");
+    let event = builder.build();
+
+    assert_eq!(event.timestamp_nanos, 12345);
+    assert_eq!(event.level, LogLevel::Debug);
+    assert_eq!(event.target, "test_module");
+    assert_eq!(event.message, "Hello World");
+    assert_eq!(event.fields.len(), 2);
+
+    assert_eq!(event.fields[0].key, "key1");
+    assert!(matches!(event.fields[0].value, FieldValue::I64(42)));
+    assert_eq!(event.fields[1].key, "key2");
+    assert!(matches!(
+      event.fields[1].value,
+      FieldValue::Str("static_str")
+    ));
   }
 
   #[test]
-  fn test_event_default() {
-    let event = LogEvent::default();
+  fn test_field_value_serialization() {
+    let field_values = vec![
+      FieldValue::Str("static"),
+      FieldValue::String("owned".to_string()),
+      FieldValue::I64(-123),
+      FieldValue::U64(456),
+      FieldValue::F64(3.14),
+      FieldValue::Bool(true),
+      FieldValue::Debug("dbg".to_string()),
+      FieldValue::Display("disp".to_string()),
+    ];
 
-    assert_eq!(event.timestamp, 0);
-    assert_eq!(event.level, "");
-    assert_eq!(event.message, "");
-    assert_eq!(event.target, "");
-  }
-
-  #[test]
-  fn test_event_clone() {
-    let event = LogEvent::new(
-      1234567890,
-      "WARN".to_string(),
-      "Warning message".to_string(),
-      "warn_target".to_string(),
-    );
-
-    let cloned = event.clone();
-
-    assert_eq!(event.timestamp, cloned.timestamp);
-    assert_eq!(event.level, cloned.level);
-    assert_eq!(event.message, cloned.message);
-    assert_eq!(event.target, cloned.target);
-  }
-
-  #[test]
-  fn test_event_serialization() {
-    let event = LogEvent::new(
-      1234567890,
-      "INFO".to_string(),
-      "Test message".to_string(),
-      "test_target".to_string(),
-    );
-
-    let json = event.serialize();
-    assert!(json.contains("1234567890"));
-    assert!(json.contains("INFO"));
-    assert!(json.contains("Test message"));
-    assert!(json.contains("test_target"));
-  }
-
-  #[test]
-  fn test_event_deserialization() {
-    let original_event = LogEvent::new(
-      1234567890,
-      "INFO".to_string(),
-      "Test message".to_string(),
-      "test_target".to_string(),
-    );
-
-    let json = original_event.serialize();
-    let deserialized_event = LogEvent::deserialize(json);
-
-    assert_eq!(original_event.timestamp, deserialized_event.timestamp);
-    assert_eq!(original_event.level, deserialized_event.level);
-    assert_eq!(original_event.message, deserialized_event.message);
-    assert_eq!(original_event.target, deserialized_event.target);
-  }
-
-  #[test]
-  fn test_event_display() {
-    let event = LogEvent::new(
-      1234567890,
-      "INFO".to_string(),
-      "Display test".to_string(),
-      "display_target".to_string(),
-    );
-
-    let display_str = format!("{}", event);
-    assert!(display_str.contains("1234567890"));
-    assert!(display_str.contains("INFO"));
-    assert!(display_str.contains("Display test"));
-    assert!(display_str.contains("display_target"));
-  }
-
-  /// Helper to create events with different levels
-  fn event_with_level(level: &str) -> LogEvent {
-    LogEvent::new(
-      1000,
-      level.to_string(),
-      "Level test".to_string(),
-      "target".to_string(),
-    )
-  }
-
-  #[test]
-  fn test_event_all_levels() {
-    let levels = ["Trace", "Debug", "Info", "Warn", "Error"];
-
-    for &level in &levels {
-      let event = event_with_level(level);
-      assert_eq!(event.level, level);
-      assert_eq!(event.message, "Level test");
-      assert_eq!(event.target, "target");
+    for value in field_values {
+      let serialized = serde_json::to_string(&value).expect("Failed to serialize");
+      let deserialized: FieldValue =
+        serde_json::from_str(&serialized).expect("Failed to deserialize");
+      match value {
+        FieldValue::Str(s) => {
+          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+        },
+        FieldValue::String(ref s) => {
+          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+        },
+        FieldValue::I64(i) => {
+          assert!(matches!(deserialized, FieldValue::I64(d) if d == i));
+        },
+        FieldValue::U64(u) => {
+          assert!(matches!(deserialized, FieldValue::U64(d) if d == u));
+        },
+        FieldValue::F64(f) => {
+          if let FieldValue::F64(d) = deserialized {
+            assert!((d - f).abs() < f64::EPSILON);
+          } else {
+            panic!("Expected F64");
+          }
+        },
+        FieldValue::Bool(b) => {
+          assert!(matches!(deserialized, FieldValue::Bool(d) if d == b));
+        },
+        FieldValue::Debug(ref s) => {
+          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+        },
+        FieldValue::Display(ref s) => {
+          assert!(matches!(deserialized, FieldValue::String(ref ds) if ds == s));
+        },
+      }
     }
   }
 
   #[test]
-  fn test_event_special_characters() {
-    let msg = "Message with \"quotes\", newlines\n, and \\backslashes\\";
-    let target = "target/with/special\\chars";
-    let event = LogEvent::new(
-      123,
-      "DEBUG".to_string(),
-      msg.to_string(),
-      target.to_string(),
-    );
+  fn test_event_builder_clone() {
+    let mut builder = EventBuilder::new_with_capacity(2);
+    builder
+      .message("Clone test".into())
+      .field("a", FieldValue::I64(1));
 
-    let json = event.serialize();
-    assert!(json.contains("\\\"quotes\\\""));
-    assert!(json.contains("newlines\\n"));
-    assert!(json.contains("\\\\backslashes\\\\"));
+    let event1 = builder.build();
+    let event2 = event1.clone();
 
-    let deserialized = LogEvent::deserialize(json);
-    assert_eq!(deserialized.message, msg);
-    assert_eq!(deserialized.target, target);
+    assert_eq!(event1.message, event2.message);
+    assert_eq!(event1.fields.len(), event2.fields.len());
   }
 
   #[test]
-  fn test_event_multiple_clone_and_modify() {
-    let event = LogEvent::new(
-      1,
-      "INFO".to_string(),
-      "Original".to_string(),
-      "target1".to_string(),
-    );
-    let mut clone1 = event.clone();
-    let mut clone2 = clone1.clone();
+  fn test_event_builder_multiple_fields() {
+    let keys = [
+      "key0", "key1", "key2", "key3", "key4", "key5", "key6", "key7",
+    ];
 
-    // Modify clones
-    clone1.message = "Modified1".to_string();
-    clone2.message = "Modified2".to_string();
+    let mut builder = EventBuilder::new_with_capacity(8);
+    for i in 0..8 {
+      builder.field(keys[i], FieldValue::I64(i as i64));
+    }
 
-    assert_eq!(event.message, "Original");
-    assert_eq!(clone1.message, "Modified1");
-    assert_eq!(clone2.message, "Modified2");
-  }
+    let event = builder.build();
+    assert_eq!(event.fields.len(), 8);
 
-  #[test]
-  fn test_event_json_round_trip_with_special_chars() {
-    let msg = "Special chars: \t\n\"\\";
-    let event = LogEvent::new(
-      999,
-      "WARN".to_string(),
-      msg.to_string(),
-      "target".to_string(),
-    );
-
-    let json = event.serialize();
-    let deserialized = LogEvent::deserialize(json.clone());
-    let reserialized = deserialized.serialize();
-
-    assert_eq!(json, reserialized);
-    assert_eq!(deserialized.message, msg);
-  }
-
-  #[test]
-  fn test_event_display_matches_serialize() {
-    let event = LogEvent::new(
-      555,
-      "ERROR".to_string(),
-      "Display test".to_string(),
-      "display_target".to_string(),
-    );
-    assert_eq!(event.serialize(), format!("{}", event));
+    for (i, field) in event.fields.iter().enumerate() {
+      assert_eq!(field.key, keys[i]);
+      assert!(matches!(field.value, FieldValue::I64(v) if v == i as i64));
+    }
   }
 }
