@@ -146,3 +146,25 @@ pub fn build_event_fast(interner: Arc<StringInterner>, tracing_event: &tracing::
       .build_from_tracing(tracing_event)
   })
 }
+
+#[inline]
+pub fn build_event_stack(
+  interner: &Arc<StringInterner>,
+  timestamp_millis: u64,
+  level: LogLevel,
+  target: &str,
+  message: &str,
+) -> LogEvent {
+  let thread_id = EventBuilder::current_thread_id_u64() as u8;
+
+  LogEvent {
+    packed_meta: LogEvent::pack_meta(timestamp_millis, level, thread_id),
+    target_id: interner.intern_target(target),
+    message_id: interner.intern_message(message),
+    field_count: 0,
+    fields: [crate::event::Field::empty(); 3],
+    file_id: 0,
+    line: 0,
+    _padding: [0; 9],
+  }
+}

@@ -66,7 +66,7 @@ pub struct Field {
 
 impl Field {
   #[inline]
-  const fn empty() -> Self {
+  pub const fn empty() -> Self {
     Self {
       key_id: 0,
       value: FieldValue::Bool(false),

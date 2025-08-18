@@ -73,3 +73,7 @@ path = "distributed_simulator.rs"
 name = "max_performance"
 path = "max_performance.rs"
 
+[[bin]]
+name = "max-test"
+path = "max-test.rs"
+
