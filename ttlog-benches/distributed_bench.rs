@@ -17,13 +17,13 @@ use ttlog::{
 
 // Configure Criterion for reliable benchmarks
 fn configure_criterion() -> Criterion {
-    Criterion::default()
-        .sample_size(30)           // More samples for reliability
-        .measurement_time(Duration::from_secs(10))  // Longer measurement time
-        .warm_up_time(Duration::from_secs(5))       // Proper warmup
-        .confidence_level(0.95)    // 95% confidence interval
-        .significance_level(0.05)  // 5% significance level
-        .noise_threshold(0.05)     // 5% noise threshold
+  Criterion::default()
+    .sample_size(30) // More samples for reliability
+    .measurement_time(Duration::from_secs(10)) // Longer measurement time
+    .warm_up_time(Duration::from_secs(5)) // Proper warmup
+    .confidence_level(0.95) // 95% confidence interval
+    .significance_level(0.05) // 5% significance level
+    .noise_threshold(0.05) // 5% noise threshold
 }
 
 fn current_thread_id_u64() -> u32 {
@@ -676,15 +676,17 @@ fn create_network_event() -> LogEvent {
 // Benchmark Groups
 // ============================================================================
 
-criterion_group!(
-  benches,
-  bench_distributed_node_performance,
-  bench_multi_node_cluster,
-  bench_extreme_concurrency,
-  bench_memory_stress_testing,
-  bench_network_simulation,
-  bench_distributed_snapshot_performance,
-  bench_extreme_serialization,
-);
+criterion_group! {
+  name = benches;
+  config = configure_criterion();
+  targets =
+    bench_distributed_node_performance,
+    bench_multi_node_cluster,
+    bench_extreme_concurrency,
+    bench_memory_stress_testing,
+    bench_network_simulation,
+    bench_distributed_snapshot_performance,
+    bench_extreme_serialization,
+}
 
 criterion_main!(benches);

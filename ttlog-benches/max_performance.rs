@@ -14,6 +14,11 @@ use ttlog::{
   trace::Trace,
 };
 
+#[cfg(feature = "jemalloc")]
+use jemalloc_ctl as jemctl;
+#[cfg(feature = "sysinfo")]
+use sysinfo::{System, SystemExt, RefreshKind, MemoryRefreshKind};
+
 // ============================================================================
 // Table Output Utilities
 // ============================================================================
@@ -44,6 +49,24 @@ struct SummaryMetric {
   value: f64,
   #[tabled(rename = "Unit")]
   unit: String,
+}
+
+#[derive(Debug, Clone, Tabled)]
+struct MemoryMatrixRow {
+  #[tabled(rename = "Events")]
+  events: usize,
+  #[tabled(rename = "Fields/Event")]
+  fields_per_event: usize,
+  #[tabled(rename = "Msg Size (B)")]
+  message_size_bytes: usize,
+  #[tabled(rename = "Total Bytes (approx)")]
+  total_bytes_approx: usize,
+  #[tabled(rename = "Bytes/Event (approx)")]
+  bytes_per_event_approx: usize,
+  #[tabled(rename = "RSS Delta (MiB)")]
+  rss_delta_mib: f64,
+  #[tabled(rename = "Alloc Bytes (opt)")]
+  alloc_bytes_opt: String,
 }
 
 /// Formats a table of test results using tabled
@@ -89,6 +112,29 @@ fn current_thread_id_u64() -> u32 {
 // ============================================================================
 // Maximum Performance Testing Components
 // ============================================================================
+
+/// Try to read current resident set size in bytes using sysinfo (if enabled)
+fn read_rss_bytes() -> Option<u64> {
+  #[cfg(feature = "sysinfo")]
+  {
+    let mut sys = System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
+    sys.refresh_memory();
+    return Some(sys.process(sysinfo::get_current_pid().ok()?)?.memory() * 1024);
+  }
+  None
+}
+
+/// Try to read jemalloc allocated bytes (if enabled)
+fn read_jemalloc_allocated_bytes() -> Option<u64> {
+  #[cfg(feature = "jemalloc")]
+  {
+    let epoch = jemctl::epoch::mib().ok()?;
+    let allocated = jemctl::stats::allocated::mib().ok()?;
+    let _ = epoch.advance();
+    return allocated.read().ok();
+  }
+  None
+}
 
 /// Tests maximum throughput capabilities
 struct ThroughputTester {
@@ -380,51 +426,144 @@ impl MemoryEfficiencyTester {
     Self
   }
 
+  /// More accurate estimation: include alignment padding, string capacities, and fields
+  fn estimate_event_bytes(event: &LogEvent) -> usize {
+    // Base struct size
+    let base = std::mem::size_of::<LogEvent>();
+    // Target/message approximations (use len as lower bound)
+    let target = event.target.len();
+    let message = event.message.len();
+    // Fields: size of Field plus enum payload; approximate with key length and match arms
+    let mut fields_bytes = 0usize;
+    for f in &event.fields {
+      fields_bytes += std::mem::size_of::<Field>();
+      fields_bytes += f.key.len();
+      // Payload approx
+      fields_bytes += match &f.value {
+        FieldValue::Str(s) => s.len(),
+        FieldValue::String(s) => s.len(),
+        FieldValue::Debug(s) | FieldValue::Display(s) => s.len(),
+        _ => std::mem::size_of_val(&f.value),
+      };
+    }
+    // Rough alignment padding to 8 bytes
+    let total = base + target + message + fields_bytes;
+    (total + 7) & !7
+  }
+
+  /// Test memory matrix across (events x fields x message size)
+  fn memory_matrix(&self) -> Vec<MemoryMatrixRow> {
+    let mut rows = Vec::new();
+
+    let event_counts = [1_000usize, 10_000, 100_000];
+    let fields_options = [0usize, 3, 8];
+    let message_sizes = [32usize, 128, 512];
+
+    // Baseline RSS / jemalloc allocated
+    let rss_before = read_rss_bytes();
+    let alloc_before = read_jemalloc_allocated_bytes();
+
+    for &count in &event_counts {
+      for &fields_per_event in &fields_options {
+        for &msg_size in &message_sizes {
+          // Build synthetic events
+          let mut events = Vec::with_capacity(count);
+          let mut approx_total = 0usize;
+          for i in 0..count {
+            let mut fields = smallvec::smallvec![];
+            for j in 0..fields_per_event {
+              fields.push(Field {
+                key: Cow::Owned(format!("k{}", j)),
+                value: match j % 6 {
+                  0 => FieldValue::U64(i as u64),
+                  1 => FieldValue::I64((i as i64) * 7),
+                  2 => FieldValue::F64((i as f64) * 3.14),
+                  3 => FieldValue::Bool(i % 2 == 0),
+                  4 => FieldValue::Str(Cow::Owned("x".repeat(8))),
+                  _ => FieldValue::Debug(format!("dbg-{}-{}", i, j)),
+                },
+              });
+            }
+
+            let event = LogEvent {
+              timestamp_nanos: i as u64,
+              level: LogLevel::Info,
+              target: Cow::Borrowed("matrix"),
+              message: Cow::Owned("m".repeat(msg_size)),
+              fields,
+              thread_id: 0,
+              file: None,
+              line: None,
+            };
+            approx_total += Self::estimate_event_bytes(&event);
+            events.push(event);
+          }
+
+          // Touch the data to prevent optimizations
+          let checksum: u64 = events.iter().map(|e| e.message.len() as u64).sum();
+
+          // Measure deltas
+          let rss_after = read_rss_bytes();
+          let alloc_after = read_jemalloc_allocated_bytes();
+          let rss_delta_mib = match (rss_before, rss_after) {
+            (Some(b), Some(a)) if a > b => (a - b) as f64 / (1024.0 * 1024.0),
+            _ => 0.0,
+          };
+          let alloc_delta = match (alloc_before, alloc_after) {
+            (Some(b), Some(a)) if a > b => format!("{}", a - b),
+            _ => "-".to_string(),
+          };
+
+          rows.push(MemoryMatrixRow {
+            events: count,
+            fields_per_event,
+            message_size_bytes: msg_size,
+            total_bytes_approx: approx_total,
+            bytes_per_event_approx: approx_total / count.max(1),
+            rss_delta_mib,
+            alloc_bytes_opt: alloc_delta,
+          });
+
+          // Free
+          drop(events);
+        }
+      }
+    }
+
+    rows
+  }
+
   /// Test maximum memory efficiency
   fn max_memory_efficiency(&self) -> TestResult {
     let start = Instant::now();
 
-    // Test with different event sizes
-    let mut total_memory = 0;
-    let mut total_events = 0;
+    // Build a small controlled set to estimate bytes per event
+    let mut total_memory = 0usize;
+    let mut total_events = 0usize;
     let mut test_details = Vec::new();
 
-    for event_size in [100, 1000, 10000, 100000].iter() {
+    for event_size in [100, 1_000, 10_000].iter() {
       let test_start = Instant::now();
-      let mut events = Vec::new();
+      let mut events: Vec<LogEvent> = (0..*event_size)
+        .map(|i| create_large_event(i as u64))
+        .collect();
 
-      // Create events of specified size
-      for i in 0..*event_size {
-        let event = create_large_event(i);
-        events.push(event);
-      }
-
-      // Calculate actual memory usage by summing individual event sizes
-      let mut memory_usage = 0;
+      // Estimate memory (struct + strings + fields, with alignment)
+      let mut memory_usage = 0usize;
       for event in &events {
-        // Calculate size of the event structure
-        let event_size_bytes = std::mem::size_of::<LogEvent>();
-        // Add size of the message string
-        let message_size = event.message.len();
-        // Add size of fields (approximate)
-        let fields_size = event.fields.len() * std::mem::size_of::<Field>();
-        // Add size of target string
-        let target_size = event.target.len();
-
-        memory_usage += event_size_bytes + message_size + fields_size + target_size;
+        memory_usage += Self::estimate_event_bytes(event);
       }
-
       total_memory += memory_usage;
       total_events += *event_size;
 
       let test_duration = test_start.elapsed();
       test_details.push(format!(
-        "{} events: {} bytes in {:?}",
+        "{} events: {} approx bytes in {:?}",
         event_size, memory_usage, test_duration
       ));
 
-      // Clean up
-      events.clear();
+      // Ensure events are used
+      events.retain(|e| e.message.len() > 0);
     }
 
     let total_duration = start.elapsed();
@@ -434,28 +573,13 @@ impl MemoryEfficiencyTester {
       0.0
     };
 
-    let additional_info: Vec<(String, String)> = vec![
-      (
-        "Total Memory".to_string(),
-        format!("{} bytes", total_memory),
-      ),
-      ("Total Events".to_string(), total_events.to_string()),
-    ]
-    .into_iter()
-    .chain(test_details.into_iter().map(|d| ("Test".to_string(), d)))
-    .collect();
-
     TestResult {
       test_name: "Memory Efficiency".to_string(),
-      metric: "Memory per Event".to_string(),
+      metric: "Memory per Event (approx)".to_string(),
       value: memory_per_event,
       unit: "bytes/event".to_string(),
       duration: format!("{:?}", total_duration),
-      additional_info: additional_info
-        .into_iter()
-        .map(|(k, v)| format!("{}: {}", k, v))
-        .collect::<Vec<_>>()
-        .join(", "),
+      additional_info: test_details.join(", "),
     }
   }
 
@@ -467,7 +591,7 @@ impl MemoryEfficiencyTester {
     let mut total_events = 0;
     let mut test_details = Vec::new();
 
-    for event_count in [1000, 10000, 100000].iter() {
+    for event_count in [1_000, 10_000, 100_000].iter() {
       let test_start = Instant::now();
 
       // Create buffer with events
@@ -511,6 +635,42 @@ impl MemoryEfficiencyTester {
 // Main Performance Testing Functions
 // ============================================================================
 
+fn run_memory_efficiency_tests() {
+  println!("🚀 Starting Maximum Memory Efficiency Tests...");
+  println!("==============================================");
+
+  let tester = MemoryEfficiencyTester::new(Duration::from_secs(30));
+  let mut results = Vec::new();
+
+  // Test 1: Maximum memory efficiency (approximate per event)
+  println!("\n📊 Test 1: Memory Efficiency (Approx)");
+  let memory_efficiency_result = tester.max_memory_efficiency();
+  results.push(memory_efficiency_result.clone());
+
+  // Test 2: Memory Matrix (events x fields x message size)
+  println!("\n📊 Test 2: Memory Matrix (Events × Fields × Message Size)");
+  let matrix = tester.memory_matrix();
+  let table = Table::new(&matrix).to_string();
+  println!("{}", table);
+
+  // Display results in table format
+  print_results_table(&results, "🚀 MEMORY EFFICIENCY TEST RESULTS");
+
+  // Create summary
+  let summary = vec![SummaryMetric {
+    metric: "Approx Bytes per Event".to_string(),
+    value: results
+      .iter()
+      .find(|r| r.test_name == "Memory Efficiency")
+      .map(|r| r.value)
+      .unwrap_or(0.0),
+    unit: "bytes/event".to_string(),
+  }];
+  print_summary_table(&summary, "📊 MEMORY EFFICIENCY SUMMARY");
+
+  println!("\n🎉 Memory efficiency tests completed!");
+}
+
 fn run_throughput_tests() {
   println!("🚀 Starting Maximum Throughput Tests...");
   println!("=======================================");
@@ -520,12 +680,12 @@ fn run_throughput_tests() {
 
   // Test 1: Maximum events per second
   println!("\n📊 Test 1: Maximum Events Per Second");
-  let max_events_result = tester.max_events_per_second(1000000);
+  let max_events_result = tester.max_events_per_second(1_000_000);
   results.push(max_events_result.clone());
 
   // Test 2: Maximum buffer operations
   println!("\n📊 Test 2: Maximum Buffer Operations");
-  let max_ops_result = tester.max_buffer_operations(1000000);
+  let max_ops_result = tester.max_buffer_operations(1_000_000);
   results.push(max_ops_result.clone());
 
   // Display results in table format
@@ -535,13 +695,13 @@ fn run_throughput_tests() {
   let summary = vec![
     SummaryMetric {
       metric: "Maximum Events per Second".to_string(),
-      value: max_events_result.value,
-      unit: max_events_result.unit.clone(),
+      value: results[0].value,
+      unit: results[0].unit.clone(),
     },
     SummaryMetric {
       metric: "Maximum Buffer Operations per Second".to_string(),
-      value: max_ops_result.value,
-      unit: max_ops_result.unit.clone(),
+      value: results[1].value,
+      unit: results[1].unit.clone(),
     },
   ];
   print_summary_table(&summary, "📊 THROUGHPUT SUMMARY");
@@ -563,7 +723,7 @@ fn run_concurrency_tests() {
 
   // Test 2: Maximum concurrent buffers
   println!("\n📊 Test 2: Maximum Concurrent Buffers");
-  let max_buffers_result = tester.max_concurrent_buffers(100000);
+  let max_buffers_result = tester.max_concurrent_buffers(100_000);
   results.push(max_buffers_result.clone());
 
   // Display results in table format
@@ -573,56 +733,18 @@ fn run_concurrency_tests() {
   let summary = vec![
     SummaryMetric {
       metric: "Maximum Concurrent Threads".to_string(),
-      value: max_threads_result.value,
-      unit: max_threads_result.unit.clone(),
+      value: results[0].value,
+      unit: results[0].unit.clone(),
     },
     SummaryMetric {
       metric: "Maximum Concurrent Buffers".to_string(),
-      value: max_buffers_result.value,
-      unit: max_buffers_result.unit.clone(),
+      value: results[1].value,
+      unit: results[1].unit.clone(),
     },
   ];
   print_summary_table(&summary, "📊 CONCURRENCY SUMMARY");
 
   println!("\n🎉 Concurrency tests completed!");
-}
-
-fn run_memory_efficiency_tests() {
-  println!("🚀 Starting Maximum Memory Efficiency Tests...");
-  println!("==============================================");
-
-  let tester = MemoryEfficiencyTester::new(Duration::from_secs(30));
-  let mut results = Vec::new();
-
-  // Test 1: Maximum memory efficiency
-  println!("\n📊 Test 1: Maximum Memory Efficiency");
-  let memory_efficiency_result = tester.max_memory_efficiency();
-  results.push(memory_efficiency_result.clone());
-
-  // Test 2: Maximum snapshot performance
-  println!("\n📊 Test 2: Maximum Snapshot Performance");
-  let snapshot_performance_result = tester.max_snapshot_performance();
-  results.push(snapshot_performance_result.clone());
-
-  // Display results in table format
-  print_results_table(&results, "🚀 MEMORY EFFICIENCY TEST RESULTS");
-
-  // Create summary
-  let summary = vec![
-    SummaryMetric {
-      metric: "Memory Efficiency".to_string(),
-      value: memory_efficiency_result.value,
-      unit: memory_efficiency_result.unit.clone(),
-    },
-    SummaryMetric {
-      metric: "Snapshot Performance".to_string(),
-      value: snapshot_performance_result.value,
-      unit: snapshot_performance_result.unit.clone(),
-    },
-  ];
-  print_summary_table(&summary, "📊 MEMORY EFFICIENCY SUMMARY");
-
-  println!("\n🎉 Memory efficiency tests completed!");
 }
 
 fn run_comprehensive_performance_tests() {
@@ -636,8 +758,8 @@ fn run_comprehensive_performance_tests() {
   // Run throughput tests and collect results
   println!("\n📊 Running Throughput Tests...");
   let tester_throughput = ThroughputTester::new(Duration::from_secs(10));
-  let max_events_result = tester_throughput.max_events_per_second(1000000);
-  let max_ops_result = tester_throughput.max_buffer_operations(1000000);
+  let max_events_result = tester_throughput.max_events_per_second(1_000_000);
+  let max_ops_result = tester_throughput.max_buffer_operations(1_000_000);
   all_results.extend_from_slice(&[max_events_result.clone(), max_ops_result.clone()]);
   all_summaries.extend_from_slice(&[
     SummaryMetric {
@@ -656,7 +778,7 @@ fn run_comprehensive_performance_tests() {
   println!("\n📊 Running Concurrency Tests...");
   let tester_concurrency = ConcurrencyTester::new(Duration::from_secs(60));
   let max_threads_result = tester_concurrency.max_concurrent_threads(1024);
-  let max_buffers_result = tester_concurrency.max_concurrent_buffers(100000);
+  let max_buffers_result = tester_concurrency.max_concurrent_buffers(100_000);
   all_results.extend_from_slice(&[max_threads_result.clone(), max_buffers_result.clone()]);
   all_summaries.extend_from_slice(&[
     SummaryMetric {
@@ -675,23 +797,12 @@ fn run_comprehensive_performance_tests() {
   println!("\n📊 Running Memory Efficiency Tests...");
   let tester_memory = MemoryEfficiencyTester::new(Duration::from_secs(30));
   let memory_efficiency_result = tester_memory.max_memory_efficiency();
-  let snapshot_performance_result = tester_memory.max_snapshot_performance();
-  all_results.extend_from_slice(&[
-    memory_efficiency_result.clone(),
-    snapshot_performance_result.clone(),
-  ]);
-  all_summaries.extend_from_slice(&[
-    SummaryMetric {
-      metric: "Memory Efficiency".to_string(),
-      value: memory_efficiency_result.value,
-      unit: memory_efficiency_result.unit.clone(),
-    },
-    SummaryMetric {
-      metric: "Snapshot Performance".to_string(),
-      value: snapshot_performance_result.value,
-      unit: snapshot_performance_result.unit.clone(),
-    },
-  ]);
+  all_results.push(memory_efficiency_result.clone());
+  all_summaries.push(SummaryMetric {
+    metric: "Approx Bytes per Event".to_string(),
+    value: memory_efficiency_result.value,
+    unit: memory_efficiency_result.unit.clone(),
+  });
 
   let total_duration = start.elapsed();
 

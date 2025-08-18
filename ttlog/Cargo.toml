@@ -17,44 +17,21 @@ serde_json = { workspace = true }
 smallvec = { workspace = true }
 chrono = { workspace = true }
 lz4 = { workspace = true }
-
-# Async and concurrency
-crossbeam-channel = { workspace = true }
-crossbeam-epoch = { workspace = true }
-crossbeam-queue = { workspace = true }
+gethostname = { workspace = true }
 
 # Tracing ecosystem
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-# System utilities
-gethostname = { workspace = true }
-tempfile = { workspace = true }
-
-# Development and testing
-criterion = { workspace = true }
-tabled = { workspace = true }
+# Async and concurrency
+crossbeam-channel = { workspace = true }
+crossbeam-queue = { workspace = true }
 
 [dev-dependencies]
+# Async and concurrency
+crossbeam-epoch = { workspace = true }
+# System utilities
 tempfile = { workspace = true }
-
-[[bench]]
-name = "distributed_bench"
-harness = false
-
-[[bin]]
-name = "test_performance"
-path = "benches/test_performance.rs"
-
-[[bin]]
-name = "heavy_stress_test"
-path = "benches/heavy_stress_test.rs"
-
-[[bin]]
-name = "distributed_simulator"
-path = "benches/distributed_simulator.rs"
-
-[[bin]]
-name = "max_performance"
-path = "benches/max_performance.rs"
+criterion = { workspace = true }
+tabled = { workspace = true }
 

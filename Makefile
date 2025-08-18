@@ -142,28 +142,28 @@ coverage:
 
 # Run benchmarks
 bench:
-	@echo "⚡ Running comprehensive benchmarks..."
-	cargo bench --workspace
+	@echo "⚡ Running comprehensive benchmarks (ttlog-benches, bench profile)..."
+	cd ttlog-benches && cargo bench
 
 # Run quick benchmarks
 bench-quick:
-	@echo "⚡ Running quick benchmarks..."
-	CRITERION_SAMPLE_SIZE=10 CRITERION_MEASUREMENT_TIME=2000 cargo bench --workspace
+	@echo "⚡ Running quick benchmarks (ttlog-benches, bench profile)..."
+	cd ttlog-benches && CRITERION_SAMPLE_SIZE=10 CRITERION_MEASUREMENT_TIME=2000 cargo bench
 
 # Run distributed system benchmarks
 bench-distributed:
-	@echo "🌐 Running distributed system benchmarks..."
-	cargo run --bin distributed_bench
+	@echo "🌐 Running distributed system benchmarks (ttlog-benches, bench profile)..."
+	cd ttlog-benches && cargo bench --bench distributed_bench
 
 # Run stress tests
 bench-stress:
-	@echo "🔥 Running stress tests..."
-	cargo run --bin heavy_stress_test all
-	cargo run --bin max_performance all
+	@echo "🔥 Running stress tests (ttlog-benches, release)..."
+	cd ttlog-benches && cargo run --release --bin heavy_stress_test all
+	cd ttlog-benches && cargo run --release --bin max_performance all
 
 # Generate comprehensive benchmark report
 benchmark-report:
-	@echo "📊 Generating comprehensive benchmark report..."
+	@echo "📊 Generating comprehensive benchmark report (ttlog-benches, bench profile)..."
 	@mkdir -p benchmark_reports
 	@echo "TTLog Benchmark Report - $(shell date)" > benchmark_reports/comprehensive_report.txt
 	@echo "================================================" >> benchmark_reports/comprehensive_report.txt
@@ -174,7 +174,7 @@ benchmark-report:
 	@echo "  Rust Version: $(shell rustc --version)" >> benchmark_reports/comprehensive_report.txt
 	@echo "" >> benchmark_reports/comprehensive_report.txt
 	@echo "Running benchmarks..." >> benchmark_reports/comprehensive_report.txt
-	@cargo bench --workspace 2>&1 | tee -a benchmark_reports/comprehensive_report.txt
+	@cd ttlog-benches && cargo bench 2>&1 | tee -a ../benchmark_reports/comprehensive_report.txt
 	@echo "✅ Benchmark report generated: benchmark_reports/comprehensive_report.txt"
 
 # Check for security vulnerabilities
@@ -270,25 +270,25 @@ run-filereader:
 
 # Performance testing
 perf-test:
-	@echo "⚡ Running performance tests..."
-	cargo run --bin test_performance
-	cargo run --bin heavy_stress_test memory
-	cargo run --bin distributed_simulator database
+	@echo "⚡ Running performance tests (ttlog-benches, release)..."
+	cd ttlog-benches && cargo run --release --bin test_performance
+	cd ttlog-benches && cargo run --release --bin heavy_stress_test memory
+	cd ttlog-benches && cargo run --release --bin distributed_simulator database
 
 # Memory profiling
 mem-profile:
-	@echo "🧠 Running memory profiling..."
+	@echo "🧠 Running memory profiling (ttlog-benches, release)..."
 	@if command -v heaptrack >/dev/null 2>&1; then \
-		heaptrack cargo run --bin heavy_stress_test memory; \
+		cd ttlog-benches && heaptrack cargo run --release --bin heavy_stress_test all; \
 	else \
 		echo "⚠️  heaptrack not found. Install with: sudo apt install heaptrack"; \
 	fi
 
 # CPU profiling
 cpu-profile:
-	@echo "🔥 Running CPU profiling..."
+	@echo "🔥 Running CPU profiling (ttlog-benches, release)..."
 	@if command -v cargo-flamegraph >/dev/null 2>&1; then \
-		cargo flamegraph --bin heavy_stress_test -- memory; \
+		cd ttlog-benches && cargo flamegraph --bin heavy_stress_test -- all; \
 	else \
 		echo "⚠️  cargo-flamegraph not found. Install with: cargo install flamegraph"; \
 	fi

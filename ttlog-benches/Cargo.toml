@@ -1,0 +1,74 @@
+[package]
+name = "ttlog-benches"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description = "TTLog benchmark and performance suites (criterion + binaries)"
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+# Optional enhanced allocator/process memory introspection
+jemalloc = ["dep:jemalloc-ctl"]
+sysinfo = ["dep:sysinfo"]
+
+# We organize this as a binary crate hosting multiple benchmark binaries
+[dependencies]
+# Use ttlog from workspace
+ttlog = { path = "../ttlog" }
+
+# Core deps used by benches
+serde = { workspace = true }
+serde_cbor = { workspace = true }
+serde_json = { workspace = true }
+smallvec = { workspace = true }
+chrono = { workspace = true }
+lz4 = { workspace = true }
+rand = { workspace = true }
+
+# Concurrency
+crossbeam-channel = { workspace = true }
+crossbeam-epoch = { workspace = true }
+crossbeam-queue = { workspace = true }
+
+# Criterion and reporting
+criterion = { workspace = true }
+tabled = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Optional (recommended for improved allocator introspection)
+jemalloc-ctl = { version = "0.5", optional = true }
+
+# Optional cross-platform process info (alternative approach)
+sysinfo = { version = "0.30", optional = true, default-features = false }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+# Criterion-style bench (Rust requires [[bench]] in Cargo.toml for harness=false)
+[[bench]]
+name = "distributed_bench"
+harness = false
+path = "distributed_bench.rs"
+
+# Binary runners for various suites
+[[bin]]
+name = "test_performance"
+path = "test_performance.rs"
+
+[[bin]]
+name = "heavy_stress_test"
+path = "heavy_stress_test.rs"
+
+[[bin]]
+name = "distributed_simulator"
+path = "distributed_simulator.rs"
+
+[[bin]]
+name = "max_performance"
+path = "max_performance.rs"

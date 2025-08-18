@@ -141,8 +141,8 @@ cleanup_before() {
         print_success "Cleaned snapshot files"
     fi
     
-    # Clean build artifacts
-    cargo clean --workspace >/dev/null 2>&1 || true
+    # Clean build artifacts for this crate only
+    (cd "$SCRIPT_DIR" && cargo clean) >/dev/null 2>&1 || true
     print_success "Cleaned build artifacts"
     echo ""
 }
@@ -162,9 +162,9 @@ run_criterion_benchmarks() {
     export CRITERION_WARM_UP_TIME
     
     if [ "$VERBOSE" = true ]; then
-        cargo bench --workspace 2>&1 | tee "$log_file"
+        (cd "$SCRIPT_DIR" && cargo bench --release) 2>&1 | tee "$log_file"
     else
-        cargo bench --workspace > "$log_file" 2>&1
+        (cd "$SCRIPT_DIR" && cargo bench --release) > "$log_file" 2>&1
     fi
     
     if [ $? -eq 0 ]; then
@@ -188,9 +188,9 @@ run_distributed_benchmarks() {
     local log_file="$LOG_DIR/distributed_benchmarks.log"
     
     if [ "$VERBOSE" = true ]; then
-        cargo run --bin distributed_bench 2>&1 | tee "$log_file"
+        (cd "$SCRIPT_DIR" && cargo bench --bench distributed_bench --release) 2>&1 | tee "$log_file"
     else
-        cargo run --bin distributed_bench > "$log_file" 2>&1
+        (cd "$SCRIPT_DIR" && cargo bench --bench distributed_bench --release) > "$log_file" 2>&1
     fi
     
     if [ $? -eq 0 ]; then
@@ -216,17 +216,17 @@ run_stress_tests() {
     # Run heavy stress test
     print_info "Running heavy stress test..."
     if [ "$VERBOSE" = true ]; then
-        cargo run --bin heavy_stress_test all 2>&1 | tee -a "$log_file"
+        (cd "$SCRIPT_DIR" && cargo run --release --bin heavy_stress_test all) 2>&1 | tee -a "$log_file"
     else
-        cargo run --bin heavy_stress_test all >> "$log_file" 2>&1
+        (cd "$SCRIPT_DIR" && cargo run --release --bin heavy_stress_test all) >> "$log_file" 2>&1
     fi
     
     # Run max performance test
     print_info "Running max performance test..."
     if [ "$VERBOSE" = true ]; then
-        cargo run --bin max_performance all 2>&1 | tee -a "$log_file"
+        (cd "$SCRIPT_DIR" && cargo run --release --bin max_performance all) 2>&1 | tee -a "$log_file"
     else
-        cargo run --bin max_performance all >> "$log_file" 2>&1
+        (cd "$SCRIPT_DIR" && cargo run --release --bin max_performance all) >> "$log_file" 2>&1
     fi
     
     if [ $? -eq 0 ]; then
@@ -250,9 +250,9 @@ run_performance_tests() {
     local log_file="$LOG_DIR/performance_tests.log"
     
     if [ "$VERBOSE" = true ]; then
-        cargo run --bin test_performance 2>&1 | tee "$log_file"
+        (cd "$SCRIPT_DIR" && cargo run --release --bin test_performance) 2>&1 | tee "$log_file"
     else
-        cargo run --bin test_performance > "$log_file" 2>&1
+        (cd "$SCRIPT_DIR" && cargo run --release --bin test_performance) > "$log_file" 2>&1
     fi
     
     if [ $? -eq 0 ]; then
@@ -276,9 +276,9 @@ run_simulations() {
     local log_file="$LOG_DIR/simulations.log"
     
     if [ "$VERBOSE" = true ]; then
-        cargo run --bin distributed_simulator all 2>&1 | tee "$log_file"
+        (cd "$SCRIPT_DIR" && cargo run --release --bin distributed_simulator all) 2>&1 | tee "$log_file"
     else
-        cargo run --bin distributed_simulator all > "$log_file" 2>&1
+        (cd "$SCRIPT_DIR" && cargo run --release --bin distributed_simulator all) > "$log_file" 2>&1
     fi
     
     if [ $? -eq 0 ]; then

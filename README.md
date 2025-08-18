@@ -470,6 +470,89 @@ let snapshot_count = std::fs::read_dir("/tmp")
 info!("Total snapshots created: {}", snapshot_count);
 ```
 
+## 🧪 Benchmark Suite
+
+TTLog ships a dedicated benchmark crate: `ttlog-benches`.
+
+### Run benchmarks
+
+```bash
+# Full Criterion suite (bench profile)
+make bench
+
+# Generate a comprehensive report (writes to benchmark_reports/)
+make benchmark-report
+
+# Stress/performance binaries (release)
+make bench-stress
+make perf-test
+
+# Or run individually
+cd ttlog-benches
+cargo bench --bench distributed_bench
+cargo run --release --bin max_performance all
+cargo run --release --bin heavy_stress_test all
+cargo run --release --bin distributed_simulator all
+```
+
+### Memory Matrix (enhanced memory benchmark)
+
+The `max_performance` suite now includes a Memory Matrix that sweeps event counts, fields per event, and message sizes, and reports:
+- Approx total bytes and bytes/event
+- RSS delta in MiB (with `--features sysinfo`)
+- Allocated bytes delta from jemalloc (with `--features jemalloc`)
+
+Usage:
+
+```bash
+# Approximate memory metrics only
+cargo run -p ttlog-benches --release --bin max_performance -- memory
+
+# With RSS + jemalloc allocator stats (if available)
+cargo run -p ttlog-benches --features "sysinfo jemalloc" --release --bin max_performance -- memory
+```
+
+Notes:
+- Benchmarks use the bench profile (`cargo bench`) and the binaries use release (`cargo run --release`) for stable numbers.
+- If Criterion warns about not completing samples in 10s, either increase target time (env vars) or reduce samples:
+  - `CRITERION_SAMPLE_SIZE=10 CRITERION_MEASUREMENT_TIME=30000 make bench`
+
+### Example Benchmark Report (excerpt)
+
+This is an example excerpt from `make benchmark-report` (full text in `benchmark_reports/comprehensive_report.txt`):
+
+```
+TTLog Benchmark Report - Mon Aug 18 11:03:33 AM EEST 2025
+================================================
+
+System Information:
+  CPU: 16 cores
+  Memory: 38Gi
+  Rust Version: rustc 1.88.0 (6b00bc388 2025-06-23)
+
+Running benchmarks...
+Gnuplot not found, using plotters backend
+
+distributed_node_performance/workers/1
+  time: [72.655 ms 72.928 ms 73.178 ms]
+...
+multi_node_cluster/nodes/2
+  time: [1.0155 s 1.0157 s 1.0159 s]
+...
+extreme_concurrency/extreme_buffer_operations
+  time: [368.06 ms 368.44 ms 368.90 ms]
+...
+extreme_serialization/cborevents/10000
+  time: [7.6944 ms 7.7031 ms 7.7116 ms]
+...
+```
+
+To view full details (all groups and inputs), open:
+- `benchmark_reports/comprehensive_report.txt`
+- Criterion HTML reports under `target/criterion/`
+
+---
+
 ## 🔮 Future Enhancements
 
 ### **Planned Features**
