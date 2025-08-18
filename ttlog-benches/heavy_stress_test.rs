@@ -140,7 +140,7 @@ impl CPUStressTest {
           .duration_since(std::time::UNIX_EPOCH)
           .unwrap()
           .as_nanos() as u64,
-        level: LogLevel::Info,
+        level: LogLevel::INFO,
         target: Cow::Borrowed("cpu_stress"),
         message: Cow::Owned(format!("Heavy computation result: {}", result)),
         fields: smallvec::smallvec![
@@ -192,7 +192,7 @@ impl CPUStressTest {
               .duration_since(std::time::UNIX_EPOCH)
               .unwrap()
               .as_nanos() as u64,
-            level: LogLevel::Info,
+            level: LogLevel::INFO,
             target: Cow::Borrowed("prime_stress"),
             message: Cow::Owned(format!("Found prime number: {}", num)),
             fields: smallvec::smallvec![
@@ -460,7 +460,7 @@ fn create_extreme_event(thread_id: u32, event_id: u64) -> LogEvent {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Info,
+    level: LogLevel::INFO,
     target: Cow::Borrowed("extreme_stress"),
     message: Cow::Owned(format!(
       "Extreme stress event {} from thread {}",
@@ -508,7 +508,7 @@ fn create_network_stress_event(source_node: u32, message_id: u64) -> LogEvent {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Info,
+    level: LogLevel::INFO,
     target: Cow::Borrowed("network_stress"),
     message: Cow::Owned(format!(
       "Network stress message {} from node {}",
@@ -544,7 +544,7 @@ fn create_congestion_event(source_node: u32, target_node: u32, message_id: u64) 
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Warn,
+    level: LogLevel::WARN,
     target: Cow::Borrowed("network_congestion"),
     message: Cow::Owned(format!(
       "Congestion message {} from {} to {}",

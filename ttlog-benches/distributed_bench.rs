@@ -64,7 +64,7 @@ impl DistributedNode {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos() as u64,
-              level: LogLevel::Info,
+              level: LogLevel::INFO,
               target: Cow::Owned(format!("node_{}_worker_{}", node_id, worker_id).to_string()),
               message: Cow::Owned(format!("Distributed event {} from worker {}", i, worker_id)),
               fields: smallvec::smallvec![
@@ -597,7 +597,7 @@ fn create_heavy_event(thread_id: u32, event_id: u64) -> LogEvent {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Info,
+    level: LogLevel::INFO,
     target: Cow::Borrowed("extreme_bench"),
     message: Cow::Owned(format!(
       "Heavy distributed event {} from thread {}",
@@ -649,7 +649,7 @@ fn create_network_event() -> LogEvent {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Info,
+    level: LogLevel::INFO,
     target: Cow::Borrowed("network_sim"),
     message: Cow::Owned("Network communication event".to_string()),
     fields: smallvec::smallvec![

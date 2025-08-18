@@ -82,7 +82,7 @@ fn test_event_creation() {
   for i in 0..100000 {
     let _event = LogEvent {
       timestamp_nanos: i as u64,
-      level: LogLevel::Info,
+      level: LogLevel::INFO,
       target: "test".into(),
       message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![],
@@ -101,7 +101,7 @@ fn test_event_creation() {
   for i in 0..100000 {
     let _event = EventBuilder::new_with_capacity(4)
       .timestamp_nanos(i as u64)
-      .level(LogLevel::Info)
+      .level(LogLevel::INFO)
       .target(Cow::Borrowed("test"))
       .message(Cow::Owned(format!("Event {}", i)))
       .build();
@@ -116,7 +116,7 @@ fn test_event_creation() {
   for i in 0..10000 {
     let _event = LogEvent {
       timestamp_nanos: i as u64,
-      level: LogLevel::Info,
+      level: LogLevel::INFO,
       target: "test".into(),
       message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![
@@ -241,7 +241,7 @@ fn test_memory_efficiency() {
   let _events: Vec<LogEvent> = (0..10000)
     .map(|i| LogEvent {
       timestamp_nanos: i as u64,
-      level: LogLevel::Info,
+      level: LogLevel::INFO,
       target: "test".into(),
       message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![],
@@ -272,7 +272,7 @@ fn test_memory_efficiency() {
   for i in 0..1000 {
     let event = LogEvent {
       timestamp_nanos: i as u64,
-      level: LogLevel::Info,
+      level: LogLevel::INFO,
       target: "test".into(),
       message: Cow::Owned(format!("Event {}", i)),
       fields: smallvec::smallvec![],

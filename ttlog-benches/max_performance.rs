@@ -17,7 +17,7 @@ use ttlog::{
 #[cfg(feature = "jemalloc")]
 use jemalloc_ctl as jemctl;
 #[cfg(feature = "sysinfo")]
-use sysinfo::{System, SystemExt, RefreshKind, MemoryRefreshKind};
+use sysinfo::{MemoryRefreshKind, RefreshKind, System, SystemExt};
 
 // ============================================================================
 // Table Output Utilities
@@ -117,7 +117,8 @@ fn current_thread_id_u64() -> u32 {
 fn read_rss_bytes() -> Option<u64> {
   #[cfg(feature = "sysinfo")]
   {
-    let mut sys = System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
+    let mut sys =
+      System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
     sys.refresh_memory();
     return Some(sys.process(sysinfo::get_current_pid().ok()?)?.memory() * 1024);
   }
@@ -487,7 +488,7 @@ impl MemoryEfficiencyTester {
 
             let event = LogEvent {
               timestamp_nanos: i as u64,
-              level: LogLevel::Info,
+              level: LogLevel::INFO,
               target: Cow::Borrowed("matrix"),
               message: Cow::Owned("m".repeat(msg_size)),
               fields,
@@ -832,7 +833,7 @@ fn create_performance_event(thread_id: u32, event_id: u64) -> LogEvent {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Info,
+    level: LogLevel::INFO,
     target: Cow::Borrowed("max_performance"),
     message: Cow::Owned(format!(
       "Performance event {} from thread {}",
@@ -868,7 +869,7 @@ fn create_large_event(event_id: u64) -> LogEvent {
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_nanos() as u64,
-    level: LogLevel::Info,
+    level: LogLevel::INFO,
     target: Cow::Borrowed("large_event"),
     message: Cow::Owned(format!("Large event {} with extensive fields", event_id)),
     fields: smallvec::smallvec![

@@ -76,7 +76,7 @@ impl DatabaseNode {
           .duration_since(std::time::UNIX_EPOCH)
           .unwrap()
           .as_nanos() as u64,
-        level: LogLevel::Info,
+        level: LogLevel::INFO,
         target: Cow::Borrowed("database_node"),
         message: Cow::Owned(format!(
           "Database operation: {} {} = {}",
@@ -180,9 +180,9 @@ impl Microservice {
           .unwrap()
           .as_nanos() as u64,
         level: if status_code < 400 {
-          LogLevel::Info
+          LogLevel::INFO
         } else {
-          LogLevel::Warn
+          LogLevel::WARN
         },
         target: Cow::Borrowed("microservice"),
         message: Cow::Owned(format!(
@@ -273,7 +273,7 @@ impl MessageQueue {
               .duration_since(std::time::UNIX_EPOCH)
               .unwrap()
               .as_nanos() as u64,
-            level: LogLevel::Info,
+            level: LogLevel::INFO,
             target: Cow::Borrowed("message_queue"),
             message: Cow::Owned(format!(
               "Produced message {} from producer {}",
@@ -332,7 +332,7 @@ impl MessageQueue {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos() as u64,
-              level: LogLevel::Info,
+              level: LogLevel::INFO,
               target: Cow::Borrowed("message_queue"),
               message: Cow::Owned(format!("Consumed message by consumer {}", consumer_id)),
               fields: smallvec::smallvec![
@@ -454,7 +454,7 @@ impl DistributedCache {
           .duration_since(std::time::UNIX_EPOCH)
           .unwrap()
           .as_nanos() as u64,
-        level: LogLevel::Info,
+        level: LogLevel::INFO,
         target: Cow::Borrowed("distributed_cache"),
         message: Cow::Owned(format!("Cache operation: {} {}", operation, key)),
         fields: smallvec::smallvec![
