@@ -22,7 +22,7 @@ mod __test__ {
     // Should be able to send messages using the new builder API
     let event = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(1000)
-      .level(LogLevel::Info)
+      .level(LogLevel::INFO)
       .target(Cow::Borrowed("test_target"))
       .message(Cow::Borrowed("Test message"))
       .build();
@@ -44,7 +44,7 @@ mod __test__ {
   fn test_trace_message_display() {
     let event = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(1000)
-      .level(LogLevel::Info)
+      .level(LogLevel::INFO)
       .target(Cow::Borrowed("test_target"))
       .message(Cow::Borrowed("Test message"))
       .build();

@@ -24,7 +24,7 @@ mod __test__ {
     // Add some events using the new builder API
     let event1 = builder
       .timestamp_nanos(1000)
-      .level(LogLevel::Info)
+      .level(LogLevel::INFO)
       .target(Cow::Borrowed("target1"))
       .message(Cow::Borrowed("First"))
       .build();
@@ -33,7 +33,7 @@ mod __test__ {
 
     let event2 = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(2000)
-      .level(LogLevel::Warn)
+      .level(LogLevel::WARN)
       .target(Cow::Borrowed("target2"))
       .message(Cow::Borrowed("Second"))
       .build();
@@ -73,7 +73,7 @@ mod __test__ {
 
     let event = EventBuilder::new_with_capacity(0)
       .timestamp_nanos(1000)
-      .level(LogLevel::Info)
+      .level(LogLevel::INFO)
       .target(Cow::Borrowed("target"))
       .message(Cow::Borrowed("Test"))
       .build();

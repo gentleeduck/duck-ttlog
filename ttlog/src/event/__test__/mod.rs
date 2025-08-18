@@ -14,7 +14,7 @@ mod __test__ {
     let mut builder = EventBuilder::new_with_capacity(4);
     builder
       .timestamp_nanos(12345)
-      .level(LogLevel::Debug)
+      .level(LogLevel::DEBUG)
       .target(Cow::Borrowed("test_module"))
       .message(Cow::Borrowed("Hello World"))
       .field("key1", FieldValue::I64(42))
@@ -23,7 +23,7 @@ mod __test__ {
     let event = builder.build();
 
     assert_eq!(event.timestamp_nanos, 12345);
-    assert_eq!(event.level, LogLevel::Debug);
+    assert_eq!(event.level, LogLevel::DEBUG);
     assert_eq!(event.target, "test_module");
     assert_eq!(event.message, "Hello World");
     assert_eq!(event.fields.len(), 2);

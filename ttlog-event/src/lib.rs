@@ -37,7 +37,7 @@ impl Parse for LogInput {
 #[proc_macro]
 pub fn info(input: TokenStream) -> TokenStream {
   let input = syn::parse_macro_input!(input as LogInput);
-  let expanded = generate_log_call(&input, LogLevel::Info);
+  let expanded = generate_log_call(&input, LogLevel::INFO);
   TokenStream::from(expanded)
 }
 
@@ -52,7 +52,7 @@ fn generate_log_call(input: &LogInput, level: LogLevel) -> proc_macro2::TokenStr
   let field_count = input.fields.len();
 
   let level_ident = match level {
-    LogLevel::Info => quote! { Info },
+    LogLevel::INFO => quote! { Info },
     _ => quote! {Info},
   };
 
