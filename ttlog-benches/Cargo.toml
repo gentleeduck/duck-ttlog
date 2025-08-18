@@ -72,3 +72,4 @@ path = "distributed_simulator.rs"
 [[bin]]
 name = "max_performance"
 path = "max_performance.rs"
+

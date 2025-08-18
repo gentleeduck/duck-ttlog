@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct EventBuilder {
-  interner: Arc<StringInterner>, // Stores/reuses strings like target/message names
+  interner: Arc<StringInterner>, // Stores/Reuses strings like target/message names
   thread_id: u8,                 // Thread identifier for the log event
   event_pool: Vec<LogEvent>,     // Pre-allocated events for reuse
   pool_index: usize,             // Current position in the circular pool
@@ -16,7 +16,7 @@ pub struct EventBuilder {
 
 impl EventBuilder {
   pub fn new(interner: Arc<StringInterner>) -> Self {
-    let thread_id = current_thread_id_u64() as u8;
+    let thread_id = EventBuilder::current_thread_id_u64() as u8;
 
     Self {
       interner,
@@ -93,14 +93,14 @@ impl EventBuilder {
 
     self.build_fast(timestamp_millis, level, target, message)
   }
-}
 
-fn current_thread_id_u64() -> u32 {
-  use std::collections::hash_map::DefaultHasher;
-  use std::hash::{Hash, Hasher};
-  let mut hasher = DefaultHasher::new();
-  thread::current().id().hash(&mut hasher);
-  hasher.finish() as u32
+  fn current_thread_id_u64() -> u32 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    thread::current().id().hash(&mut hasher);
+    hasher.finish() as u32
+  }
 }
 
 /// Zero-copy message visitor - no allocations unless absolutely necessary

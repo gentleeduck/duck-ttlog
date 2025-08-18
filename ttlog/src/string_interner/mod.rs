@@ -91,7 +91,6 @@ impl StringInterner {
 
     let mut storage_guard = storage.write().unwrap();
     let id = storage_guard.len() as u16;
-    println!("_______________________{:?}", hash);
 
     if id == u16::MAX {
       return 0;
@@ -99,7 +98,6 @@ impl StringInterner {
 
     storage_guard.push(Arc::from(string));
     lookup_guard.insert(hash, id);
-    println!("{:?} {:?} {:?}", hash, id, string);
     id
   }
 

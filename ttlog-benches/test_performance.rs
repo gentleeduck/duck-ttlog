@@ -1,11 +1,13 @@
+use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
-use std::{borrow::Cow, sync::Arc};
 
 use ttlog::{
-  event::{EventBuilder, Field, FieldValue, LogEvent, LogLevel},
+  event::{FieldValue, LogEvent, LogLevel},
+  event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
   snapshot::SnapshotWriter,
+  string_interner::StringInterner,
   trace::Trace,
 };
 
@@ -77,66 +79,54 @@ fn test_event_creation() {
   println!("📝 Event Creation Performance:");
   println!("------------------------------");
 
-  // Test direct construction
+  // Prepare interner and builder
+  let interner = Arc::new(StringInterner::new());
+  let mut builder = EventBuilder::new(Arc::clone(&interner));
+
+  // Test fast path construction
   let start = Instant::now();
   for i in 0..100000 {
-    let _event = LogEvent {
-      timestamp_nanos: i as u64,
-      level: LogLevel::INFO,
-      target: "test".into(),
-      message: Cow::Owned(format!("Event {}", i)),
-      fields: smallvec::smallvec![],
-      thread_id: 1,
-      file: Some("test.rs".into()),
-      line: Some(42),
-    };
+    let _event = builder.build_fast(i as u64, LogLevel::INFO, "test", &format!("Event {}", i));
   }
   let direct_time = start.elapsed();
   let direct_throughput = 100000.0 / direct_time.as_secs_f64();
 
-  println!("  Direct construction: {:.2} events/sec", direct_throughput);
+  println!("  Fast construction:   {:.2} events/sec", direct_throughput);
 
-  // Test builder pattern
+  // Test build_with_fields with minimal overhead
   let start = Instant::now();
   for i in 0..100000 {
-    let _event = EventBuilder::new_with_capacity(4)
-      .timestamp_nanos(i as u64)
-      .level(LogLevel::INFO)
-      .target(Cow::Borrowed("test"))
-      .message(Cow::Owned(format!("Event {}", i)))
-      .build();
+    let _event = builder.build_with_fields(
+      i as u64,
+      LogLevel::INFO,
+      "test",
+      &format!("Event {}", i),
+      &[],
+    );
   }
   let builder_time = start.elapsed();
   let builder_throughput = 100000.0 / builder_time.as_secs_f64();
 
-  println!("  Builder pattern:    {:.2} events/sec", builder_throughput);
+  println!("  With fields (0):    {:.2} events/sec", builder_throughput);
 
   // Test with fields
   let start = Instant::now();
   for i in 0..10000 {
-    let _event = LogEvent {
-      timestamp_nanos: i as u64,
-      level: LogLevel::INFO,
-      target: "test".into(),
-      message: Cow::Owned(format!("Event {}", i)),
-      fields: smallvec::smallvec![
-        Field {
-          key: "user_id".into(),
-          value: FieldValue::I64(i as i64),
-        },
-        Field {
-          key: "action".into(),
-          value: FieldValue::Str("login".into()),
-        },
-        Field {
-          key: "success".into(),
-          value: FieldValue::Bool(true),
-        },
-      ],
-      thread_id: 1,
-      file: Some("test.rs".into()),
-      line: Some(42),
-    };
+    let fields: Vec<(String, FieldValue)> = vec![
+      ("user_id".to_string(), FieldValue::I64(i as i64)),
+      (
+        "action".to_string(),
+        FieldValue::StringId(interner.intern_field("login")),
+      ),
+      ("success".to_string(), FieldValue::Bool(true)),
+    ];
+    let _event = builder.build_with_fields(
+      i as u64,
+      LogLevel::INFO,
+      "test",
+      &format!("Event {}", i),
+      &fields,
+    );
   }
   let fields_time = start.elapsed();
   let fields_throughput = 10000.0 / fields_time.as_secs_f64();
@@ -238,17 +228,10 @@ fn test_memory_efficiency() {
 
   // Test memory per event
   let start = Instant::now();
+  let interner = Arc::new(StringInterner::new());
+  let mut builder = EventBuilder::new(Arc::clone(&interner));
   let _events: Vec<LogEvent> = (0..10000)
-    .map(|i| LogEvent {
-      timestamp_nanos: i as u64,
-      level: LogLevel::INFO,
-      target: "test".into(),
-      message: Cow::Owned(format!("Event {}", i)),
-      fields: smallvec::smallvec![],
-      thread_id: 1,
-      file: Some("test.rs".into()),
-      line: Some(42),
-    })
+    .map(|i| builder.build_fast(i as u64, LogLevel::INFO, "test", &format!("Event {}", i)))
     .collect();
   let memory_time = start.elapsed();
   let memory_throughput = 10000.0 / memory_time.as_secs_f64();
@@ -270,16 +253,7 @@ fn test_memory_efficiency() {
   let start = Instant::now();
   let mut buffer = LockFreeRingBuffer::<LogEvent>::new(1000);
   for i in 0..1000 {
-    let event = LogEvent {
-      timestamp_nanos: i as u64,
-      level: LogLevel::INFO,
-      target: "test".into(),
-      message: Cow::Owned(format!("Event {}", i)),
-      fields: smallvec::smallvec![],
-      thread_id: 1,
-      file: Some("test.rs".into()),
-      line: Some(42),
-    };
+    let event = builder.build_fast(i as u64, LogLevel::INFO, "test", &format!("Event {}", i));
     buffer.push(event).unwrap();
   }
 

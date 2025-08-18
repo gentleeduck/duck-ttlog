@@ -1,15 +1,20 @@
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use smallvec;
+use chrono;
 use ttlog::{
-  event::{Field, FieldValue, LogEvent, LogLevel},
+  event::{FieldValue, LogEvent, LogLevel},
+  event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
+  string_interner::StringInterner,
 };
+
+// Shared interner and thread-local builder for fast event creation
+static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
 
 fn current_thread_id_u64() -> u32 {
   use std::collections::hash_map::DefaultHasher;
@@ -70,44 +75,24 @@ impl DatabaseNode {
         _ => {},
       }
 
-      // Log operation
-      let event = LogEvent {
-        timestamp_nanos: std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap()
-          .as_nanos() as u64,
-        level: LogLevel::INFO,
-        target: Cow::Borrowed("database_node"),
-        message: Cow::Owned(format!(
-          "Database operation: {} {} = {}",
-          operation, key, value
-        )),
-        fields: smallvec::smallvec![
-          Field {
-            key: "node_id".into(),
-            value: FieldValue::U64(self.node_id as u64),
-          },
-          Field {
-            key: "operation".into(),
-            value: FieldValue::Str(operation.into()),
-          },
-          Field {
-            key: "key".into(),
-            value: FieldValue::Str(key.into()),
-          },
-          Field {
-            key: "value".into(),
-            value: FieldValue::Str(value.into()),
-          },
-          Field {
-            key: "operation_id".into(),
-            value: FieldValue::U64(i as u64),
-          },
-        ],
-        thread_id: current_thread_id_u64(),
-        file: Some("distributed_simulator.rs".into()),
-        line: Some(42),
-      };
+      // Log operation (new API)
+      let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+      let event = BUILDER.with(|cell| {
+        if cell.borrow().is_none() {
+          *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+        }
+        let mut builder_ref = cell.borrow_mut();
+        let builder = builder_ref.as_mut().unwrap();
+        let ts = chrono::Utc::now().timestamp_millis() as u64;
+        let msg = format!("Database operation: {} {} = {}", operation, key, value);
+        let fields: Vec<(String, FieldValue)> = vec![
+          ("node_id".to_string(), FieldValue::U64(self.node_id as u64)),
+          ("operation".to_string(), FieldValue::StringId(interner.intern_field(operation))),
+          ("key".to_string(), FieldValue::StringId(interner.intern_field(&key))),
+          ("value".to_string(), FieldValue::StringId(interner.intern_field(&value))),
+        ];
+        builder.build_with_fields(ts, LogLevel::INFO, "database_node", &msg, &fields)
+      });
 
       self.event_buffer.push(event).unwrap();
       self.operation_count.fetch_add(1, Ordering::Relaxed);
@@ -173,52 +158,29 @@ impl Microservice {
 
       thread::sleep(processing_time);
 
-      // Log request
-      let event = LogEvent {
-        timestamp_nanos: std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap()
-          .as_nanos() as u64,
-        level: if status_code < 400 {
-          LogLevel::INFO
-        } else {
-          LogLevel::WARN
-        },
-        target: Cow::Borrowed("microservice"),
-        message: Cow::Owned(format!(
-          "API request: {} {} -> {}",
-          method, endpoint, status_code
-        )),
-        fields: smallvec::smallvec![
-          Field {
-            key: "service_id".into(),
-            value: FieldValue::U64(self.service_id as u64),
-          },
-          Field {
-            key: "method".into(),
-            value: FieldValue::Str(method.into()),
-          },
-          Field {
-            key: "endpoint".into(),
-            value: FieldValue::Str(endpoint.into()),
-          },
-          Field {
-            key: "status_code".into(),
-            value: FieldValue::U64(status_code as u64),
-          },
-          Field {
-            key: "processing_time_ms".into(),
-            value: FieldValue::U64(processing_time.as_millis() as u64),
-          },
-          Field {
-            key: "request_id".into(),
-            value: FieldValue::U64(i as u64),
-          },
-        ],
-        thread_id: current_thread_id_u64(),
-        file: Some("distributed_simulator.rs".into()),
-        line: Some(42),
-      };
+      // Log request (new API)
+      let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+      let event = BUILDER.with(|cell| {
+        if cell.borrow().is_none() {
+          *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+        }
+        let mut builder_ref = cell.borrow_mut();
+        let builder = builder_ref.as_mut().unwrap();
+        let ts = chrono::Utc::now().timestamp_millis() as u64;
+        let msg = format!("API request: {} {} -> {}", method, endpoint, status_code);
+        let level = if status_code < 400 { LogLevel::INFO } else { LogLevel::WARN };
+        let fields: Vec<(String, FieldValue)> = vec![
+          ("service_id".to_string(), FieldValue::U64(self.service_id as u64)),
+          ("method".to_string(), FieldValue::StringId(interner.intern_field(method))),
+          ("endpoint".to_string(), FieldValue::StringId(interner.intern_field(&endpoint))),
+          ("status_code".to_string(), FieldValue::U64(status_code as u64)),
+          (
+            "processing_time_ms".to_string(),
+            FieldValue::U64(processing_time.as_millis() as u64),
+          ),
+        ];
+        builder.build_with_fields(ts, level, "microservice", &msg, &fields)
+      });
 
       self.request_buffer.push(event).unwrap();
       self.request_count.fetch_add(1, Ordering::Relaxed);
@@ -268,39 +230,23 @@ impl MessageQueue {
       let handle = thread::spawn(move || {
         let mut produced = 0;
         for i in 0..message_count {
-          let event = LogEvent {
-            timestamp_nanos: std::time::SystemTime::now()
-              .duration_since(std::time::UNIX_EPOCH)
-              .unwrap()
-              .as_nanos() as u64,
-            level: LogLevel::INFO,
-            target: Cow::Borrowed("message_queue"),
-            message: Cow::Owned(format!(
-              "Produced message {} from producer {}",
-              i, producer_id
-            )),
-            fields: smallvec::smallvec![
-              Field {
-                key: "queue_id".into(),
-                value: FieldValue::U64(queue_id as u64),
-              },
-              Field {
-                key: "producer_id".into(),
-                value: FieldValue::U64(producer_id as u64),
-              },
-              Field {
-                key: "message_id".into(),
-                value: FieldValue::U64(i as u64),
-              },
-              Field {
-                key: "action".into(),
-                value: FieldValue::Str("produce".into()),
-              },
-            ],
-            thread_id: current_thread_id_u64(),
-            file: Some("distributed_simulator.rs".into()),
-            line: Some(42),
-          };
+          let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+          let event = BUILDER.with(|cell| {
+            if cell.borrow().is_none() {
+              *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+            }
+            let mut builder_ref = cell.borrow_mut();
+            let builder = builder_ref.as_mut().unwrap();
+            let ts = chrono::Utc::now().timestamp_millis() as u64;
+            let msg = format!("Produced message {} from producer {}", i, producer_id);
+            let fields: Vec<(String, FieldValue)> = vec![
+              ("queue_id".to_string(), FieldValue::U64(queue_id as u64)),
+              ("producer_id".to_string(), FieldValue::U64(producer_id as u64)),
+              ("message_id".to_string(), FieldValue::U64(i as u64)),
+              ("action".to_string(), FieldValue::StringId(interner.intern_field("produce"))),
+            ];
+            builder.build_with_fields(ts, LogLevel::INFO, "message_queue", &msg, &fields)
+          });
 
           buffer.push(event).unwrap();
           produced += 1;
@@ -327,36 +273,23 @@ impl MessageQueue {
             consumed += 1;
 
             // Log consumption
-            let _consume_event = LogEvent {
-              timestamp_nanos: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
-              level: LogLevel::INFO,
-              target: Cow::Borrowed("message_queue"),
-              message: Cow::Owned(format!("Consumed message by consumer {}", consumer_id)),
-              fields: smallvec::smallvec![
-                Field {
-                  key: "queue_id".into(),
-                  value: FieldValue::U64(queue_id as u64),
-                },
-                Field {
-                  key: "consumer_id".into(),
-                  value: FieldValue::U64(consumer_id as u64),
-                },
-                Field {
-                  key: "consumed_count".into(),
-                  value: FieldValue::U64(consumed),
-                },
-                Field {
-                  key: "action".into(),
-                  value: FieldValue::Str("consume".into()),
-                },
-              ],
-              thread_id: current_thread_id_u64(),
-              file: Some("distributed_simulator.rs".into()),
-              line: Some(42),
-            };
+            let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+            let _consume_event = BUILDER.with(|cell| {
+              if cell.borrow().is_none() {
+                *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+              }
+              let mut builder_ref = cell.borrow_mut();
+              let builder = builder_ref.as_mut().unwrap();
+              let ts = chrono::Utc::now().timestamp_millis() as u64;
+              let msg = format!("Consumed message by consumer {}", consumer_id);
+              let fields: Vec<(String, FieldValue)> = vec![
+                ("queue_id".to_string(), FieldValue::U64(queue_id as u64)),
+                ("consumer_id".to_string(), FieldValue::U64(consumer_id as u64)),
+                ("consumed_count".to_string(), FieldValue::U64(consumed)),
+                ("action".to_string(), FieldValue::StringId(interner.intern_field("consume"))),
+              ];
+              builder.build_with_fields(ts, LogLevel::INFO, "message_queue", &msg, &fields)
+            });
 
             // Simulate processing time
             thread::sleep(Duration::from_micros(200 + (consumed % 500) as u64));
@@ -448,41 +381,31 @@ impl DistributedCache {
         _ => {},
       }
 
-      // Log cache operation
-      let event = LogEvent {
-        timestamp_nanos: std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap()
-          .as_nanos() as u64,
-        level: LogLevel::INFO,
-        target: Cow::Borrowed("distributed_cache"),
-        message: Cow::Owned(format!("Cache operation: {} {}", operation, key)),
-        fields: smallvec::smallvec![
-          Field {
-            key: "cache_id".into(),
-            value: FieldValue::U64(self.cache_id as u64),
-          },
-          Field {
-            key: "operation".into(),
-            value: FieldValue::Str(operation.into()),
-          },
-          Field {
-            key: "key".into(),
-            value: FieldValue::Str(key.into()),
-          },
-          Field {
-            key: "hit_count".into(),
-            value: FieldValue::U64(self.hit_count.load(Ordering::Relaxed)),
-          },
-          Field {
-            key: "miss_count".into(),
-            value: FieldValue::U64(self.miss_count.load(Ordering::Relaxed)),
-          },
-        ],
-        thread_id: current_thread_id_u64(),
-        file: Some("distributed_simulator.rs".into()),
-        line: Some(42),
-      };
+      // Log cache operation (new API)
+      let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+      let event = BUILDER.with(|cell| {
+        if cell.borrow().is_none() {
+          *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+        }
+        let mut builder_ref = cell.borrow_mut();
+        let builder = builder_ref.as_mut().unwrap();
+        let ts = chrono::Utc::now().timestamp_millis() as u64;
+        let msg = format!("Cache operation: {} {}", operation, key);
+        let fields: Vec<(String, FieldValue)> = vec![
+          ("cache_id".to_string(), FieldValue::U64(self.cache_id as u64)),
+          ("operation".to_string(), FieldValue::StringId(interner.intern_field(operation))),
+          ("key".to_string(), FieldValue::StringId(interner.intern_field(&key))),
+          (
+            "hit_count".to_string(),
+            FieldValue::U64(self.hit_count.load(Ordering::Relaxed)),
+          ),
+          (
+            "miss_count".to_string(),
+            FieldValue::U64(self.miss_count.load(Ordering::Relaxed)),
+          ),
+        ];
+        builder.build_with_fields(ts, LogLevel::INFO, "distributed_cache", &msg, &fields)
+      });
 
       self.cache_buffer.push(event).unwrap();
     }

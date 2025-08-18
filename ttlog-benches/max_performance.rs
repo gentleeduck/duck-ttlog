@@ -1,16 +1,16 @@
-use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono;
-use smallvec;
 use tabled::{Table, Tabled};
 use ttlog::{
-  event::{Field, FieldValue, LogEvent, LogLevel},
+  event::{FieldValue, LogEvent, LogLevel},
+  event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
   snapshot::SnapshotWriter,
+  string_interner::StringInterner,
   trace::Trace,
 };
 
@@ -427,29 +427,9 @@ impl MemoryEfficiencyTester {
     Self
   }
 
-  /// More accurate estimation: include alignment padding, string capacities, and fields
-  fn estimate_event_bytes(event: &LogEvent) -> usize {
-    // Base struct size
-    let base = std::mem::size_of::<LogEvent>();
-    // Target/message approximations (use len as lower bound)
-    let target = event.target.len();
-    let message = event.message.len();
-    // Fields: size of Field plus enum payload; approximate with key length and match arms
-    let mut fields_bytes = 0usize;
-    for f in &event.fields {
-      fields_bytes += std::mem::size_of::<Field>();
-      fields_bytes += f.key.len();
-      // Payload approx
-      fields_bytes += match &f.value {
-        FieldValue::Str(s) => s.len(),
-        FieldValue::String(s) => s.len(),
-        FieldValue::Debug(s) | FieldValue::Display(s) => s.len(),
-        _ => std::mem::size_of_val(&f.value),
-      };
-    }
-    // Rough alignment padding to 8 bytes
-    let total = base + target + message + fields_bytes;
-    (total + 7) & !7
+  /// Estimate bytes per LogEvent (compact fixed-size struct)
+  fn estimate_event_bytes(_event: &LogEvent) -> usize {
+    std::mem::size_of::<LogEvent>()
   }
 
   /// Test memory matrix across (events x fields x message size)
@@ -457,7 +437,8 @@ impl MemoryEfficiencyTester {
     let mut rows = Vec::new();
 
     let event_counts = [1_000usize, 10_000, 100_000];
-    let fields_options = [0usize, 3, 8];
+    // LogEvent supports up to 3 fields; cap here
+    let fields_options = [0usize, 1, 3];
     let message_sizes = [32usize, 128, 512];
 
     // Baseline RSS / jemalloc allocated
@@ -467,41 +448,49 @@ impl MemoryEfficiencyTester {
     for &count in &event_counts {
       for &fields_per_event in &fields_options {
         for &msg_size in &message_sizes {
-          // Build synthetic events
+          // Build synthetic events using EventBuilder and StringInterner
+          static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+          let interner = INTERNER
+            .get_or_init(|| Arc::new(StringInterner::new()))
+            .clone();
+          thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
+
           let mut events = Vec::with_capacity(count);
           let mut approx_total = 0usize;
           for i in 0..count {
-            let mut fields = smallvec::smallvec![];
-            for j in 0..fields_per_event {
-              fields.push(Field {
-                key: Cow::Owned(format!("k{}", j)),
-                value: match j % 6 {
-                  0 => FieldValue::U64(i as u64),
-                  1 => FieldValue::I64((i as i64) * 7),
-                  2 => FieldValue::F64((i as f64) * 3.14),
-                  3 => FieldValue::Bool(i % 2 == 0),
-                  4 => FieldValue::Str(Cow::Owned("x".repeat(8))),
-                  _ => FieldValue::Debug(format!("dbg-{}-{}", i, j)),
-                },
-              });
-            }
-
-            let event = LogEvent {
-              timestamp_nanos: i as u64,
-              level: LogLevel::INFO,
-              target: Cow::Borrowed("matrix"),
-              message: Cow::Owned("m".repeat(msg_size)),
-              fields,
-              thread_id: 0,
-              file: None,
-              line: None,
-            };
+            let event = BUILDER.with(|cell| {
+              if cell.borrow().is_none() {
+                *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+              }
+              let mut builder_ref = cell.borrow_mut();
+              let builder = builder_ref.as_mut().unwrap();
+              let ts = i as u64;
+              let message = "m".repeat(msg_size);
+              if fields_per_event == 0 {
+                builder.build_fast(ts, LogLevel::INFO, "matrix", &message)
+              } else {
+                // Up to 3 fields
+                let mut fields: Vec<(String, FieldValue)> = Vec::new();
+                let limit = fields_per_event.min(3);
+                for j in 0..limit {
+                  let key = format!("k{}", j);
+                  let val = match j % 4 {
+                    0 => FieldValue::U64(i as u64),
+                    1 => FieldValue::I64((i as i64) * 7),
+                    2 => FieldValue::F64((i as f64) * 3.14),
+                    _ => FieldValue::Bool(i % 2 == 0),
+                  };
+                  fields.push((key, val));
+                }
+                builder.build_with_fields(ts, LogLevel::INFO, "matrix", &message, &fields)
+              }
+            });
             approx_total += Self::estimate_event_bytes(&event);
             events.push(event);
           }
 
           // Touch the data to prevent optimizations
-          let checksum: u64 = events.iter().map(|e| e.message.len() as u64).sum();
+          let _checksum: u64 = events.iter().map(|e| e.packed_meta as u64).sum();
 
           // Measure deltas
           let rss_after = read_rss_bytes();
@@ -563,8 +552,8 @@ impl MemoryEfficiencyTester {
         event_size, memory_usage, test_duration
       ));
 
-      // Ensure events are used
-      events.retain(|e| e.message.len() > 0);
+      // Ensure events are used (avoid optimizing away)
+      events.retain(|e| e.field_count > 0);
     }
 
     let total_duration = start.elapsed();
@@ -828,105 +817,59 @@ fn run_comprehensive_performance_tests() {
 // ============================================================================
 
 fn create_performance_event(thread_id: u32, event_id: u64) -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::INFO,
-    target: Cow::Borrowed("max_performance"),
-    message: Cow::Owned(format!(
-      "Performance event {} from thread {}",
-      event_id, thread_id
-    )),
-    fields: smallvec::smallvec![
-      Field {
-        key: "thread_id".into(),
-        value: FieldValue::U64(thread_id as u64),
-      },
-      Field {
-        key: "event_id".into(),
-        value: FieldValue::U64(event_id),
-      },
-      Field {
-        key: "timestamp".into(),
-        value: FieldValue::U64(chrono::Utc::now().timestamp_millis() as u64),
-      },
-      Field {
-        key: "performance_level".into(),
-        value: FieldValue::Str("maximum".into()),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("max_performance.rs".into()),
-    line: Some(42),
-  }
+  static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+  thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut mut_ref = cell.borrow_mut();
+    let builder = mut_ref.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let msg = format!("Performance event {} from thread {}", event_id, thread_id);
+    let fields: Vec<(String, FieldValue)> = vec![
+      ("thread_id".to_string(), FieldValue::U64(thread_id as u64)),
+      ("event_id".to_string(), FieldValue::U64(event_id)),
+      ("timestamp".to_string(), FieldValue::U64(ts)),
+    ];
+    builder.build_with_fields(ts, LogLevel::INFO, "max_performance", &msg, &fields)
+  })
 }
 
 fn create_large_event(event_id: u64) -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::INFO,
-    target: Cow::Borrowed("large_event"),
-    message: Cow::Owned(format!("Large event {} with extensive fields", event_id)),
-    fields: smallvec::smallvec![
-      Field {
-        key: "event_id".into(),
-        value: FieldValue::U64(event_id),
-      },
-      Field {
-        key: "large_string_1".into(),
-        value: FieldValue::Str(
-          "This is a very long string field that takes up significant memory space".into()
-        ),
-      },
-      Field {
-        key: "large_string_2".into(),
-        value: FieldValue::Str(
-          "Another very long string field to increase memory usage for testing purposes".into()
-        ),
-      },
-      Field {
-        key: "large_string_3".into(),
-        value: FieldValue::Str(
-          "Yet another long string field to maximize memory consumption during testing".into()
-        ),
-      },
-      Field {
-        key: "numeric_field_1".into(),
-        value: FieldValue::I64(event_id as i64 * 1000),
-      },
-      Field {
-        key: "numeric_field_2".into(),
-        value: FieldValue::U64(event_id * 2000),
-      },
-      Field {
-        key: "numeric_field_3".into(),
-        value: FieldValue::F64(event_id as f64 * 3.14159),
-      },
-      Field {
-        key: "boolean_field_1".into(),
-        value: FieldValue::Bool(event_id % 2 == 0),
-      },
-      Field {
-        key: "boolean_field_2".into(),
-        value: FieldValue::Bool(event_id % 3 == 0),
-      },
-      Field {
-        key: "debug_field".into(),
-        value: FieldValue::Debug(format!(
-          "Complex debug information for event {} with additional context",
-          event_id
-        )),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("max_performance.rs".into()),
-    line: Some(42),
-  }
+  static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+  thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut mut_ref = cell.borrow_mut();
+    let builder = mut_ref.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let msg = format!("Large event {} with extensive fields", event_id);
+    // Choose 3 representative fields
+    let fields: Vec<(String, FieldValue)> = vec![
+      ("event_id".to_string(), FieldValue::U64(event_id)),
+      // simulate large strings via interning: store the interned id
+      (
+        "large_str".to_string(),
+        FieldValue::StringId(interner.intern_field("long_string_payload")),
+      ),
+      (
+        "numeric".to_string(),
+        FieldValue::I64(event_id as i64 * 1000),
+      ),
+    ];
+    builder.build_with_fields(ts, LogLevel::INFO, "large_event", &msg, &fields)
+  })
 }
 
 // ============================================================================

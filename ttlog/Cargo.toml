@@ -35,3 +35,6 @@ tempfile = { workspace = true }
 criterion = { workspace = true }
 tabled = { workspace = true }
 
+[[bin]]
+name = "bench_rs"
+path = "bench.rs"

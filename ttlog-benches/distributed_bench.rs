@@ -1,5 +1,4 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -8,12 +7,18 @@ use std::time::{Duration, Instant};
 use chrono;
 use serde_cbor;
 use serde_json;
-use smallvec;
+use smallvec; // kept for any non-event usage; no longer used for fields
 use ttlog::{
-  event::{Field, FieldValue, LogEvent, LogLevel},
+  event::{FieldValue, LogEvent, LogLevel},
+  event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
   snapshot::SnapshotWriter,
+  string_interner::StringInterner,
 };
+
+// Shared interner and thread-local builder for fast event creation
+static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
 
 // Configure Criterion for reliable benchmarks
 fn configure_criterion() -> Criterion {
@@ -59,36 +64,25 @@ impl DistributedNode {
 
         thread::spawn(move || {
           for i in 0..1000 {
-            let event = LogEvent {
-              timestamp_nanos: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64,
-              level: LogLevel::INFO,
-              target: Cow::Owned(format!("node_{}_worker_{}", node_id, worker_id).to_string()),
-              message: Cow::Owned(format!("Distributed event {} from worker {}", i, worker_id)),
-              fields: smallvec::smallvec![
-                Field {
-                  key: "node_id".into(),
-                  value: FieldValue::U64(node_id as u64),
-                },
-                Field {
-                  key: "worker_id".into(),
-                  value: FieldValue::U64(worker_id as u64),
-                },
-                Field {
-                  key: "event_id".into(),
-                  value: FieldValue::U64(i as u64),
-                },
-                Field {
-                  key: "timestamp".into(),
-                  value: FieldValue::U64(chrono::Utc::now().timestamp_millis() as u64),
-                },
-              ],
-              thread_id: current_thread_id_u64(),
-              file: Some("distributed_bench.rs".into()),
-              line: Some(42),
-            };
+            let interner = INTERNER
+              .get_or_init(|| Arc::new(StringInterner::new()))
+              .clone();
+            let event = BUILDER.with(|cell| {
+              if cell.borrow().is_none() {
+                *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+              }
+              let mut builder_ref = cell.borrow_mut();
+              let builder = builder_ref.as_mut().unwrap();
+              let ts = chrono::Utc::now().timestamp_millis() as u64;
+              let target = format!("node_{}_worker_{}", node_id, worker_id);
+              let msg = format!("Distributed event {} from worker {}", i, worker_id);
+              let fields: Vec<(String, FieldValue)> = vec![
+                ("node_id".to_string(), FieldValue::U64(node_id as u64)),
+                ("worker_id".to_string(), FieldValue::U64(worker_id as u64)),
+                ("event_id".to_string(), FieldValue::U64(i as u64)),
+              ];
+              builder.build_with_fields(ts, LogLevel::INFO, &target, &msg, &fields)
+            });
 
             // Handle buffer full condition gracefully
             if let Err(_) = buffer_clone.push(event) {
@@ -592,84 +586,59 @@ fn bench_extreme_serialization(c: &mut Criterion) {
 // ============================================================================
 
 fn create_heavy_event(thread_id: u32, event_id: u64) -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::INFO,
-    target: Cow::Borrowed("extreme_bench"),
-    message: Cow::Owned(format!(
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut builder_ref = cell.borrow_mut();
+    let builder = builder_ref.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let msg = format!(
       "Heavy distributed event {} from thread {}",
       event_id, thread_id
-    )),
-    fields: smallvec::smallvec![
-      Field {
-        key: "thread_id".into(),
-        value: FieldValue::U64(thread_id as u64),
-      },
-      Field {
-        key: "event_id".into(),
-        value: FieldValue::U64(event_id),
-      },
-      Field {
-        key: "timestamp".into(),
-        value: FieldValue::U64(chrono::Utc::now().timestamp_millis() as u64),
-      },
-      Field {
-        key: "node_id".into(),
-        value: FieldValue::U64((thread_id % 8) as u64),
-      },
-      Field {
-        key: "worker_id".into(),
-        value: FieldValue::U64((thread_id % 4) as u64),
-      },
-      Field {
-        key: "priority".into(),
-        value: FieldValue::U64((event_id % 10) as u64),
-      },
-      Field {
-        key: "category".into(),
-        value: FieldValue::Str("distributed_system".into()),
-      },
-      Field {
-        key: "metadata".into(),
-        value: FieldValue::Debug(format!("Complex metadata for event {}", event_id)),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("distributed_bench.rs".into()),
-    line: Some(42),
-  }
+    );
+    let fields: Vec<(String, FieldValue)> = vec![
+      ("thread_id".to_string(), FieldValue::U64(thread_id as u64)),
+      ("event_id".to_string(), FieldValue::U64(event_id)),
+      (
+        "category".to_string(),
+        FieldValue::StringId(interner.intern_field("distributed_system")),
+      ),
+    ];
+    builder.build_with_fields(ts, LogLevel::INFO, "extreme_bench", &msg, &fields)
+  })
 }
 
 fn create_network_event() -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::INFO,
-    target: Cow::Borrowed("network_sim"),
-    message: Cow::Owned("Network communication event".to_string()),
-    fields: smallvec::smallvec![
-      Field {
-        key: "source_node".into(),
-        value: FieldValue::U64(1),
-      },
-      Field {
-        key: "target_node".into(),
-        value: FieldValue::U64(2),
-      },
-      Field {
-        key: "message_type".into(),
-        value: FieldValue::Str("heartbeat".into()),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("distributed_bench.rs".into()),
-    line: Some(42),
-  }
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut builder_ref = cell.borrow_mut();
+    let builder = builder_ref.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let fields: Vec<(String, FieldValue)> = vec![
+      ("source_node".to_string(), FieldValue::U64(1)),
+      ("target_node".to_string(), FieldValue::U64(2)),
+      (
+        "message_type".to_string(),
+        FieldValue::StringId(interner.intern_field("heartbeat")),
+      ),
+    ];
+    builder.build_with_fields(
+      ts,
+      LogLevel::INFO,
+      "network_sim",
+      "Network communication event",
+      &fields,
+    )
+  })
 }
 
 // ============================================================================

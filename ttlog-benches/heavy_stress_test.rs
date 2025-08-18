@@ -1,16 +1,19 @@
-use std::borrow::Cow;
-
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use chrono;
-use smallvec;
 use ttlog::{
-  event::{Field, FieldValue, LogEvent, LogLevel},
+  event::{FieldValue, LogEvent, LogLevel},
+  event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
+  string_interner::StringInterner,
 };
+
+// Shared interner and thread-local builder
+static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
 
 fn current_thread_id_u64() -> u32 {
   use std::collections::hash_map::DefaultHasher;
@@ -134,33 +137,28 @@ impl CPUStressTest {
         result = result.rotate_left(3);
       }
 
-      // Log the result
-      let _event = LogEvent {
-        timestamp_nanos: std::time::SystemTime::now()
-          .duration_since(std::time::UNIX_EPOCH)
-          .unwrap()
-          .as_nanos() as u64,
-        level: LogLevel::INFO,
-        target: Cow::Borrowed("cpu_stress"),
-        message: Cow::Owned(format!("Heavy computation result: {}", result)),
-        fields: smallvec::smallvec![
-          Field {
-            key: "iteration".into(),
-            value: FieldValue::U64(i as u64),
-          },
-          Field {
-            key: "result".into(),
-            value: FieldValue::U64(result),
-          },
-          Field {
-            key: "computation_time".into(),
-            value: FieldValue::U64(Instant::now().elapsed().as_nanos() as u64),
-          },
-        ],
-        thread_id: current_thread_id_u64(),
-        file: Some("heavy_stress_test.rs".into()),
-        line: Some(42),
-      };
+      // Log the result (new API)
+      let interner = INTERNER
+        .get_or_init(|| Arc::new(StringInterner::new()))
+        .clone();
+      let _event = BUILDER.with(|cell| {
+        if cell.borrow().is_none() {
+          *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+        }
+        let mut r = cell.borrow_mut();
+        let b = r.as_mut().unwrap();
+        let ts = chrono::Utc::now().timestamp_millis() as u64;
+        let msg = format!("Heavy computation result: {}", result);
+        let fields: Vec<(String, FieldValue)> = vec![
+          ("iteration".to_string(), FieldValue::U64(i as u64)),
+          ("result".to_string(), FieldValue::U64(result)),
+          (
+            "computation_time".to_string(),
+            FieldValue::U64(Instant::now().elapsed().as_nanos() as u64),
+          ),
+        ];
+        b.build_with_fields(ts, LogLevel::INFO, "cpu_stress", &msg, &fields)
+      });
 
       results.push(result);
 
@@ -187,28 +185,23 @@ impl CPUStressTest {
 
         // Log every 1000th prime
         if prime_count % 1000 == 0 {
-          let _event = LogEvent {
-            timestamp_nanos: std::time::SystemTime::now()
-              .duration_since(std::time::UNIX_EPOCH)
-              .unwrap()
-              .as_nanos() as u64,
-            level: LogLevel::INFO,
-            target: Cow::Borrowed("prime_stress"),
-            message: Cow::Owned(format!("Found prime number: {}", num)),
-            fields: smallvec::smallvec![
-              Field {
-                key: "prime_count".into(),
-                value: FieldValue::U64(prime_count),
-              },
-              Field {
-                key: "prime_number".into(),
-                value: FieldValue::U64(num),
-              },
-            ],
-            thread_id: current_thread_id_u64(),
-            file: Some("heavy_stress_test.rs".into()),
-            line: Some(42),
-          };
+          let interner = INTERNER
+            .get_or_init(|| Arc::new(StringInterner::new()))
+            .clone();
+          let _event = BUILDER.with(|cell| {
+            if cell.borrow().is_none() {
+              *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+            }
+            let mut r = cell.borrow_mut();
+            let b = r.as_mut().unwrap();
+            let ts = chrono::Utc::now().timestamp_millis() as u64;
+            let msg = format!("Found prime number: {}", num);
+            let fields: Vec<(String, FieldValue)> = vec![
+              ("prime_count".to_string(), FieldValue::U64(prime_count)),
+              ("prime_number".to_string(), FieldValue::U64(num)),
+            ];
+            b.build_with_fields(ts, LogLevel::INFO, "prime_stress", &msg, &fields)
+          });
         }
       }
     }
@@ -455,123 +448,93 @@ fn run_comprehensive_stress_test() {
 // ============================================================================
 
 fn create_extreme_event(thread_id: u32, event_id: u64) -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::INFO,
-    target: Cow::Borrowed("extreme_stress"),
-    message: Cow::Owned(format!(
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut r = cell.borrow_mut();
+    let b = r.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let msg = format!(
       "Extreme stress event {} from thread {}",
       event_id, thread_id
-    )),
-    fields: smallvec::smallvec![
-      Field {
-        key: "thread_id".into(),
-        value: FieldValue::U64(thread_id as u64),
-      },
-      Field {
-        key: "event_id".into(),
-        value: FieldValue::U64(event_id),
-      },
-      Field {
-        key: "timestamp".into(),
-        value: FieldValue::U64(chrono::Utc::now().timestamp_millis() as u64),
-      },
-      Field {
-        key: "stress_level".into(),
-        value: FieldValue::Str("extreme".into()),
-      },
-      Field {
-        key: "memory_pressure".into(),
-        value: FieldValue::U64((event_id % 1000) as u64),
-      },
-      Field {
-        key: "cpu_load".into(),
-        value: FieldValue::U64((event_id % 100) as u64),
-      },
-      Field {
-        key: "network_latency".into(),
-        value: FieldValue::U64((event_id % 500) as u64),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("heavy_stress_test.rs".into()),
-    line: Some(42),
-  }
+    );
+    let fields: Vec<(String, FieldValue)> = vec![
+      ("thread_id".to_string(), FieldValue::U64(thread_id as u64)),
+      ("event_id".to_string(), FieldValue::U64(event_id)),
+      (
+        "stress_level".to_string(),
+        FieldValue::StringId(interner.intern_field("extreme")),
+      ),
+    ];
+    b.build_with_fields(ts, LogLevel::INFO, "extreme_stress", &msg, &fields)
+  })
 }
 
 fn create_network_stress_event(source_node: u32, message_id: u64) -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::INFO,
-    target: Cow::Borrowed("network_stress"),
-    message: Cow::Owned(format!(
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut r = cell.borrow_mut();
+    let b = r.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let msg = format!(
       "Network stress message {} from node {}",
       message_id, source_node
-    )),
-    fields: smallvec::smallvec![
-      Field {
-        key: "source_node".into(),
-        value: FieldValue::U64(source_node as u64),
-      },
-      Field {
-        key: "message_id".into(),
-        value: FieldValue::U64(message_id),
-      },
-      Field {
-        key: "message_type".into(),
-        value: FieldValue::Str("stress_test".into()),
-      },
-      Field {
-        key: "priority".into(),
-        value: FieldValue::U64((message_id % 10) as u64),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("heavy_stress_test.rs".into()),
-    line: Some(42),
-  }
+    );
+    let fields: Vec<(String, FieldValue)> = vec![
+      (
+        "source_node".to_string(),
+        FieldValue::U64(source_node as u64),
+      ),
+      ("message_id".to_string(), FieldValue::U64(message_id)),
+      (
+        "message_type".to_string(),
+        FieldValue::StringId(interner.intern_field("stress_test")),
+      ),
+    ];
+    b.build_with_fields(ts, LogLevel::INFO, "network_stress", &msg, &fields)
+  })
 }
 
 fn create_congestion_event(source_node: u32, target_node: u32, message_id: u64) -> LogEvent {
-  LogEvent {
-    timestamp_nanos: std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_nanos() as u64,
-    level: LogLevel::WARN,
-    target: Cow::Borrowed("network_congestion"),
-    message: Cow::Owned(format!(
+  let interner = INTERNER
+    .get_or_init(|| Arc::new(StringInterner::new()))
+    .clone();
+  BUILDER.with(|cell| {
+    if cell.borrow().is_none() {
+      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
+    }
+    let mut r = cell.borrow_mut();
+    let b = r.as_mut().unwrap();
+    let ts = chrono::Utc::now().timestamp_millis() as u64;
+    let msg = format!(
       "Congestion message {} from {} to {}",
       message_id, source_node, target_node
-    )),
-    fields: smallvec::smallvec![
-      Field {
-        key: "source_node".into(),
-        value: FieldValue::U64(source_node as u64),
-      },
-      Field {
-        key: "target_node".into(),
-        value: FieldValue::U64(target_node as u64),
-      },
-      Field {
-        key: "message_id".into(),
-        value: FieldValue::U64(message_id),
-      },
-      Field {
-        key: "congestion_level".into(),
-        value: FieldValue::Str("extreme".into()),
-      },
-    ],
-    thread_id: current_thread_id_u64(),
-    file: Some("heavy_stress_test.rs".into()),
-    line: Some(42),
-  }
+    );
+    let fields: Vec<(String, FieldValue)> = vec![
+      (
+        "source_node".to_string(),
+        FieldValue::U64(source_node as u64),
+      ),
+      (
+        "target_node".to_string(),
+        FieldValue::U64(target_node as u64),
+      ),
+      (
+        "congestion_level".to_string(),
+        FieldValue::StringId(interner.intern_field("extreme")),
+      ),
+    ];
+    b.build_with_fields(ts, LogLevel::WARN, "network_congestion", &msg, &fields)
+  })
 }
 
 // ============================================================================
