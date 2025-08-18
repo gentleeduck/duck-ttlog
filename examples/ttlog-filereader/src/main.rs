@@ -4,6 +4,7 @@
 
 use lz4::block::decompress;
 use serde::{Deserialize, Serialize};
+use serde_cbor;
 use std::env;
 use std::fs::File;
 use std::io::Read;

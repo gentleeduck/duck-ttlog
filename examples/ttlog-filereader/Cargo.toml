@@ -13,6 +13,7 @@ categories.workspace = true
 # Core dependencies
 serde = { workspace = true }
 lz4 = { workspace = true }
+serde_cbor = { workspace = true }
 
 # Tracing ecosystem
 tracing = { workspace = true }
