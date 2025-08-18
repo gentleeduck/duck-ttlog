@@ -4,7 +4,7 @@ use std::{cell::RefCell, sync::Arc};
 
 use crate::{
   event::{FieldValue, LogLevel},
-  event_builder::EventBuilder,
+  event_builder::{EventBuilder, MessageVisitor},
   string_interner::StringInterner,
   trace::Message,
 };
@@ -56,17 +56,22 @@ where
       let target = event.metadata().target();
 
       // Extract message and fields using comprehensive visitor
-      let mut visitor = ComprehensiveVisitor::new(Arc::clone(&interner));
-      event.record(&mut visitor);
+      // let mut visitor = ComprehensiveVisitor::new(Arc::clone(&interner));
+      // event.record(&mut visitor);
+      //
+      // let message = visitor.message.as_deref().unwrap_or("");
 
+      let mut visitor = MessageVisitor::default();
+      event.record(&mut visitor);
       let message = visitor.message.as_deref().unwrap_or("");
+      let log_event = builder.build_fast(timestamp_millis, level, target, message);
 
       // Build the complete event with all extracted data
-      let log_event = if visitor.fields.is_empty() {
-        builder.build_fast(timestamp_millis, level, target, message)
-      } else {
-        builder.build_with_fields(timestamp_millis, level, target, message, &visitor.fields)
-      };
+      // let log_event = builder.build_fast(timestamp_millis, level, target, message);
+      // let log_event = if visitor.fields.is_empty() {
+      // } else {
+      //   builder.build_with_fields(timestamp_millis, level, target, message, &visitor.fields)
+      // };
 
       // Attempt non-blocking send
       match self.sender.try_send(Message::Event(log_event)) {
@@ -88,7 +93,7 @@ where
 /// Comprehensive visitor that extracts message and all fields from tracing events
 pub struct ComprehensiveVisitor {
   pub message: Option<String>,
-  pub fields: Vec<(String, FieldValue)>,
+  pub fields: Vec<(&'static str, FieldValue)>,
   interner: Arc<StringInterner>,
 }
 
@@ -107,9 +112,7 @@ impl tracing::field::Visit for ComprehensiveVisitor {
     if field.name() == "message" {
       self.message = Some(value.to_string());
     } else {
-      self
-        .fields
-        .push((field.name().to_string(), FieldValue::F64(value)));
+      self.fields.push((field.name(), FieldValue::F64(value)));
     }
   }
 
@@ -117,9 +120,7 @@ impl tracing::field::Visit for ComprehensiveVisitor {
     if field.name() == "message" {
       self.message = Some(value.to_string());
     } else {
-      self
-        .fields
-        .push((field.name().to_string(), FieldValue::I64(value)));
+      self.fields.push((field.name(), FieldValue::I64(value)));
     }
   }
 
@@ -127,9 +128,7 @@ impl tracing::field::Visit for ComprehensiveVisitor {
     if field.name() == "message" {
       self.message = Some(value.to_string());
     } else {
-      self
-        .fields
-        .push((field.name().to_string(), FieldValue::U64(value)));
+      self.fields.push((field.name(), FieldValue::U64(value)));
     }
   }
 
@@ -137,9 +136,7 @@ impl tracing::field::Visit for ComprehensiveVisitor {
     if field.name() == "message" {
       self.message = Some(value.to_string());
     } else {
-      self
-        .fields
-        .push((field.name().to_string(), FieldValue::Bool(value)));
+      self.fields.push((field.name(), FieldValue::Bool(value)));
     }
   }
 
@@ -151,7 +148,7 @@ impl tracing::field::Visit for ComprehensiveVisitor {
       let string_id = self.interner.intern_field(value);
       self
         .fields
-        .push((field.name().to_string(), FieldValue::StringId(string_id)));
+        .push((field.name(), FieldValue::StringId(string_id)));
     }
   }
 
@@ -164,7 +161,7 @@ impl tracing::field::Visit for ComprehensiveVisitor {
       let string_id = self.interner.intern_field(&debug_str);
       self
         .fields
-        .push((field.name().to_string(), FieldValue::StringId(string_id)));
+        .push((field.name(), FieldValue::StringId(string_id)));
     }
   }
 }

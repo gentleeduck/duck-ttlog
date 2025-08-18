@@ -127,7 +127,7 @@ impl tracing::field::Visit for MessageVisitor {
 
 // Thread-local builder for maximum performance
 thread_local! {
-    static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None);
+  static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None);
 }
 
 /// Global function to build events efficiently
