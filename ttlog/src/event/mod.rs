@@ -26,6 +26,17 @@ impl LogLevel {
       _ => LogLevel::INFO,
     }
   }
+
+  #[inline]
+  pub fn from_tracing_level(level: &tracing::Level) -> LogLevel {
+    match *level {
+      tracing::Level::TRACE => LogLevel::TRACE,
+      tracing::Level::DEBUG => LogLevel::DEBUG,
+      tracing::Level::INFO => LogLevel::INFO,
+      tracing::Level::WARN => LogLevel::WARN,
+      tracing::Level::ERROR => LogLevel::ERROR,
+    }
+  }
 }
 
 #[repr(u8)]
@@ -91,7 +102,7 @@ pub struct LogEvent {
   pub line: u16,    // 2 bytes
 
   // Padding to reach 64 bytes (cache line aligned)
-  _padding: [u8; 9], // 9 bytes padding
+  pub _padding: [u8; 9], // 9 bytes padding
 }
 
 impl LogEvent {
@@ -167,5 +178,45 @@ impl LogEvent {
     let level = ((meta >> 8) & 0xF) as u8;
     let thread_id = (meta & 0xFF) as u8;
     (timestamp, level, thread_id)
+  }
+}
+
+// Static assertions to ensure our event is exactly 64 bytes
+// const _: () = {
+//   assert!(std::mem::size_of::<LogEvent>() == 64);
+//   assert!(std::mem::align_of::<LogEvent>() >= 8);
+// };
+
+#[derive(Debug, Default)]
+pub struct EventMetrics {
+  pub events_created: std::sync::atomic::AtomicU64,
+  pub total_build_time_ns: std::sync::atomic::AtomicU64,
+  pub cache_hits: std::sync::atomic::AtomicU64,
+  pub cache_misses: std::sync::atomic::AtomicU64,
+}
+
+impl EventMetrics {
+  pub fn record_build_time(&self, start: std::time::Instant) {
+    let elapsed_ns = start.elapsed().as_nanos() as u64;
+    self
+      .total_build_time_ns
+      .fetch_add(elapsed_ns, std::sync::atomic::Ordering::Relaxed);
+    self
+      .events_created
+      .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+  }
+
+  pub fn avg_build_time_ns(&self) -> u64 {
+    let total = self
+      .total_build_time_ns
+      .load(std::sync::atomic::Ordering::Relaxed);
+    let count = self
+      .events_created
+      .load(std::sync::atomic::Ordering::Relaxed);
+    if count > 0 {
+      total / count
+    } else {
+      0
+    }
   }
 }

@@ -20,68 +20,18 @@ pub struct Snapshot {
   pub events: Vec<LogEvent>,
 }
 
-/// Writes `Snapshot` instances to disk.
-///
-/// `SnapshotWriter` is a small helper that:
-/// 1. extracts events from a `RingBuffer<Event>`,
-/// 2. marshals the `Snapshot` into CBOR,
-/// 3. compresses the CBOR payload with LZ4 (block API),
-/// 4. writes the compressed bytes atomically to disk (write to `.tmp` then rename).
-///
-/// The on-disk format is intentionally simple: CBOR payload compressed with LZ4.
-/// The file naming scheme is:
-///
-/// ```text
-/// /tmp/ttlog-<pid>-<created_at>-<reason>.bin
-/// ```
-///
-/// where `<created_at>` uses `YYYYMMDDHHMMSS`.
 #[derive(Debug, Clone)]
 pub struct SnapshotWriter {
   service: String,
 }
 
 impl SnapshotWriter {
-  /// Create a new `SnapshotWriter`.
-  ///
-  /// # Arguments
-  ///
-  /// * `service` - logical name of the service that will appear in every snapshot.
-  ///
-  /// # Example (illustrative)
-  ///
-  /// ```rust,ignore
-  /// // create a writer bound to an application name
-  /// let writer = SnapshotWriter::new("my-service");
-  /// ```
   pub fn new(service: impl Into<String>) -> Self {
     Self {
       service: service.into(),
     }
   }
 
-  /// Create a snapshot from the provided ring buffer.
-  ///
-  /// This method **consumes** the current contents of the ring buffer by calling
-  /// `take_snapshot()` on the ring. If the buffer is empty this returns `None`.
-  ///
-  /// The snapshot contains:
-  /// * the provided `reason` (converted to `String`),
-  /// * hostname via `gethostname::gethostname()` (lossy string),
-  /// * current `pid`,
-  /// * `created_at` timestamp using UTC formatted `YYYYMMDDHHMMSS`,
-  /// * all captured events.
-  ///
-  /// # Returns
-  ///
-  /// * `Some(Snapshot)` if there are events to snapshot.
-  /// * `None` if the ring buffer was empty.
-  ///
-  /// # Notes
-  ///
-  /// * `take_snapshot()` swaps out the internal buffer to avoid reallocations.
-  /// * This function is synchronous and cheap — it mainly constructs metadata
-  ///   and moves the event vector out of the `RingBuffer`.
   pub fn create_snapshot(
     &self,
     ring: &mut RingBuffer<LogEvent>,

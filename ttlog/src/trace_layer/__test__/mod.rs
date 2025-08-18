@@ -1,72 +1,106 @@
 #[cfg(test)]
-mod tests {
-  use crate::trace::Message;
-  use crate::trace_layer::BufferLayer;
+mod __test__ {
+  use std::sync::Arc;
   use crossbeam_channel::bounded;
 
-  #[test]
-  fn test_buffer_layer_new() {
-    let (sender, _receiver) = bounded::<Message>(10);
-    let layer = BufferLayer::new(sender);
+  use tracing::info;
+  use tracing_subscriber::layer::SubscriberExt;
 
-    assert!(std::format!("{:?}", layer).contains("BufferLayer"));
+  use crate::event::{FieldValue, LogLevel};
+  use crate::string_interner::StringInterner;
+  use crate::trace::Message;
+  use crate::trace_layer::BufferLayer;
+
+  fn setup_layer(cap: usize) -> (
+    Arc<StringInterner>,
+    crossbeam_channel::Receiver<Message>,
+    tracing::subscriber::DefaultGuard,
+  ) {
+    let interner = Arc::new(StringInterner::new());
+    let (tx, rx) = bounded::<Message>(cap);
+    let layer = BufferLayer::new(tx, Arc::clone(&interner));
+    let subscriber = tracing_subscriber::Registry::default().with(layer);
+    let guard = tracing::subscriber::set_default(subscriber);
+    (interner, rx, guard)
   }
 
   #[test]
-  fn test_buffer_layer_clone() {
-    let (sender, _receiver) = bounded::<Message>(10);
-    let layer = BufferLayer::new(sender);
+  fn captures_simple_event_with_message_and_target() {
+    let (interner, rx, _guard) = setup_layer(10);
 
-    let cloned = layer.clone();
+    info!(target: "my_target", "hello world");
 
-    // Both should have the same sender
-    assert!(std::format!("{:?}", layer).contains("BufferLayer"));
-    assert!(std::format!("{:?}", cloned).contains("BufferLayer"));
+    let msg = rx.recv().expect("event received");
+    match msg {
+      Message::Event(ev) => {
+        assert_eq!(ev.level(), LogLevel::INFO);
+        // resolve interned strings
+        let target = interner.get_target(ev.target_id).expect("target present");
+        let message = interner.get_message(ev.message_id).expect("message present");
+        assert_eq!(target.as_ref(), "my_target");
+        assert_eq!(message.as_ref(), "hello world");
+        assert_eq!(ev.field_count, 0);
+      },
+      other => panic!("unexpected message: {}", other),
+    }
   }
 
   #[test]
-  fn test_buffer_layer_with_tracing_events() {
-    // let (sender, receiver) = bounded::<Message>(100);
-    // let layer = BufferLayer::new(sender);
-    //
-    // // Create subscriber with our layer
-    // let subscriber = Registry::default().with(layer);
-    // let _guard = tracing::subscriber::set_default(subscriber);
-    //
-    // // Emit tracing events
-    // info!("Test info message");
-    // warn!("Test warning message");
-    // error!("Test error message");
+  fn captures_event_with_three_fields() {
+    let (interner, rx, _guard) = setup_layer(10);
 
-    // Check that events were captured
-    // let mut events = Vec::new();
-    // while let Ok(msg) = receiver.try_recv() {
-    //   match msg {
-    //     Message::Event(event) => events.push(event),
-    //     _ => {},
-    //   }
-    // }
-    //
-    // // Should have captured 3 events
-    // assert_eq!(events.len(), 3);
-    //
-    // // Check event details - note that the level is now an enum, not a string
-    // let info_event = events
-    //   .iter()
-    //   .find(|e| e.level == crate::event::LogLevel::Info)
-    //   .unwrap();
-    // assert_eq!(info_event.message, "Test info message");
-    //
-    // let warn_event = events
-    //   .iter()
-    //   .find(|e| e.level == crate::event::LogLevel::Warn)
-    //   .unwrap();
-    // assert_eq!(warn_event.message, "Test warning message");
-    //
-    // let error_event = events
-    //   .iter()
-    //   .find(|e| e.level == crate::event::LogLevel::Error)
-    //   .unwrap();
-    // assert_eq!(error_event.message, "Test error message");
+    // Ensure exactly three fields (LogEvent stores up to 3)
+    info!(target: "t_mod", key_i64 = -7i64, key_bool = true, key_str = "alpha", message = "payload");
+
+    let msg = rx.recv().expect("event received");
+    match msg {
+      Message::Event(ev) => {
+        assert_eq!(ev.level(), LogLevel::INFO);
+        assert_eq!(ev.field_count, 3);
+
+        // Verify field keys are interned and values encoded
+        let k1 = interner.get_field(ev.fields[0].key_id).unwrap();
+        let k2 = interner.get_field(ev.fields[1].key_id).unwrap();
+        let k3 = interner.get_field(ev.fields[2].key_id).unwrap();
+        let keys = [k1.as_ref(), k2.as_ref(), k3.as_ref()];
+
+        // Collect values for flexible field order
+        let mut saw_i64 = false;
+        let mut saw_bool = false;
+        let mut saw_str = false;
+
+        for (i, key) in keys.iter().enumerate() {
+          match (*key, &ev.fields[i].value) {
+            ("key_i64", FieldValue::I64(-7)) => saw_i64 = true,
+            ("key_bool", FieldValue::Bool(true)) => saw_bool = true,
+            ("key_str", FieldValue::StringId(id)) => {
+              let s = interner.get_field(*id).expect("field string present");
+              assert_eq!(s.as_ref(), "alpha");
+              saw_str = true;
+            },
+            (k, v) => panic!("unexpected field {k} => {:?}", v),
+          }
+        }
+
+        assert!(saw_i64 && saw_bool && saw_str);
+
+        // Resolve target/message
+        let target = interner.get_target(ev.target_id).unwrap();
+        let message = interner.get_message(ev.message_id).unwrap();
+        assert_eq!(target.as_ref(), "t_mod");
+        assert_eq!(message.as_ref(), "payload");
+      },
+      other => panic!("unexpected message: {}", other),
+    }
+  }
+
+  #[test]
+  fn channel_backpressure_is_handled_gracefully() {
+    let (_interner, _rx, _guard) = setup_layer(0); // bounded(0) => always full
+
+    // Should not panic even if channel is full
+    info!(target: "t", "drop me");
+
+    // No assertions; success is the lack of panic/crash
   }
 }

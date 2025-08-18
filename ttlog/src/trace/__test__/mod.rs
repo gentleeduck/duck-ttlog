@@ -1,75 +1,74 @@
 #[cfg(test)]
 mod __test__ {
+  use std::sync::Arc;
+  use crossbeam_channel::bounded;
 
-  use std::borrow::Cow;
-
-  use crate::event::{EventBuilder, LogLevel};
+  use crate::string_interner::StringInterner;
   use crate::trace::{Message, Trace};
+  use crate::event::LogLevel;
 
   #[test]
-  fn test_trace_init() {
-    let trace_system = Trace::init(100, 50);
-
-    // Should have a sender
-    assert!(trace_system.sender.capacity().unwrap_or(0) >= 50);
+  fn trace_default_level_is_info() {
+    let (tx, _rx) = bounded::<Message>(10);
+    let interner = Arc::new(StringInterner::new());
+    let trace = Trace::new(tx, interner);
+    assert_eq!(trace.get_level(), LogLevel::INFO);
   }
 
   #[test]
-  fn test_trace_get_sender() {
-    let trace_system = Trace::init(100, 50);
-    let sender = trace_system.get_sender();
+  fn trace_set_and_get_level() {
+    let (tx, _rx) = bounded::<Message>(10);
+    let interner = Arc::new(StringInterner::new());
+    let trace = Trace::new(tx, interner);
 
-    // Should be able to send messages using the new builder API
-    let event = EventBuilder::new_with_capacity(0)
-      .timestamp_nanos(1000)
-      .level(LogLevel::INFO)
-      .target(Cow::Borrowed("test_target"))
-      .message(Cow::Borrowed("Test message"))
-      .build();
+    trace.set_level(LogLevel::ERROR);
+    assert_eq!(trace.get_level(), LogLevel::ERROR);
 
-    let result = sender.send(Message::Event(event));
-
-    assert!(result.is_ok());
+    trace.set_level(LogLevel::DEBUG);
+    assert_eq!(trace.get_level(), LogLevel::DEBUG);
   }
 
   #[test]
-  fn test_trace_request_snapshot() {
-    let trace_system = Trace::init(100, 50);
+  fn trace_get_sender_clones_channel() {
+    let (tx, rx) = bounded::<Message>(10);
+    let interner = Arc::new(StringInterner::new());
+    let trace = Trace::new(tx, interner);
 
-    // Should not panic
-    trace_system.request_snapshot("test_snapshot");
-  }
-
-  #[test]
-  fn test_trace_message_display() {
-    let event = EventBuilder::new_with_capacity(0)
-      .timestamp_nanos(1000)
-      .level(LogLevel::INFO)
-      .target(Cow::Borrowed("test_target"))
-      .message(Cow::Borrowed("Test message"))
-      .build();
-
-    let messages = vec![
-      Message::Event(event.clone()),
-      Message::SnapshotImmediate("test_reason".to_string()),
-      Message::FlushAndExit,
-    ];
-
-    for msg in messages {
-      let display_str = format!("{}", msg);
-      assert!(!display_str.is_empty());
+    let cloned = trace.get_sender();
+    cloned.try_send(Message::FlushAndExit).expect("send ok");
+    let msg = rx.recv().expect("recv ok");
+    match msg {
+      Message::FlushAndExit => {},
+      _ => panic!("unexpected message variant"),
     }
   }
 
   #[test]
-  fn test_trace_with_tracing_integration() {
-    let _trace_system = Trace::init(100, 50);
+  fn trace_request_snapshot_enqueues_message() {
+    let (tx, rx) = bounded::<Message>(10);
+    let interner = Arc::new(StringInterner::new());
+    let trace = Trace::new(tx, interner);
 
-    // Generate some tracing events
-    tracing::info!("Integration test info");
-    tracing::warn!("Integration test warning");
-    tracing::error!("Integration test error");
+    trace.request_snapshot("manual-test");
+    let msg = rx.recv().expect("recv ok");
+    match msg {
+      Message::SnapshotImmediate(reason) => assert_eq!(reason, "manual-test"),
+      _ => panic!("expected SnapshotImmediate"),
+    }
+  }
 
-    // Test should complete without crashing
+  #[test]
+  fn message_display_formats() {
+    use crate::event::LogEvent;
+
+    let ev = LogEvent::new();
+    let d1 = format!("{}", Message::Event(ev));
+    assert!(d1.starts_with("Event: Event("));
+
+    let d2 = format!("{}", Message::SnapshotImmediate("why".to_string()));
+    assert_eq!(d2, "SnapshotImmediate: why");
+
+    let d3 = format!("{}", Message::FlushAndExit);
+    assert_eq!(d3, "FlushAndExit");
   }
 }

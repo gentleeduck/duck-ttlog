@@ -1,125 +1,170 @@
 mod __test__;
 
-use std::borrow::Cow;
+use std::{cell::RefCell, sync::Arc};
 
-use crate::event::{EventBuilder, LogLevel};
-use crate::trace::Message;
+use crate::{
+  event::{FieldValue, LogLevel},
+  event_builder::EventBuilder,
+  string_interner::StringInterner,
+  trace::Message,
+};
 
-use chrono::Utc;
 use crossbeam_channel::{Sender, TrySendError};
-use tracing::field::Visit;
-use tracing::{field::Field, Event as TracingEvent, Subscriber};
+use tracing::{Event as TracingEvent, Subscriber};
 use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 
-/// `BufferLayer` is a `tracing` layer that captures tracing events and
-/// forwards them to a channel for asynchronous processing.
-///
-/// This layer converts a `tracing::Event` into a minimal `Event` struct
-/// containing only the timestamp, log level, and message, and sends it
-/// to a `crossbeam_channel::Sender<Message>`.
-///
-/// # Design
-/// - Non-blocking: uses `try_send` to avoid slowing down the tracing hot path.
-/// - Drops events if the channel is full to prevent blocking.
-/// - Handles disconnected channels gracefully.
 #[derive(Debug, Clone)]
 pub struct BufferLayer {
   /// Channel sender used to forward captured events.
   sender: Sender<Message>,
+  /// String interner for efficient string storage.
+  interner: Arc<StringInterner>,
 }
 
 impl BufferLayer {
   /// Creates a new `BufferLayer` that will send events to the given channel.
-  ///
-  /// # Parameters
-  /// - `sender`: A `crossbeam_channel::Sender<Message>` to forward captured events.
-  pub fn new(sender: Sender<Message>) -> Self {
-    Self { sender }
+  pub fn new(sender: Sender<Message>, interner: Arc<StringInterner>) -> Self {
+    Self { sender, interner }
   }
+}
+// Thread-local event builder for zero-allocation event creation
+thread_local! {
+    static LAYER_BUILDER: RefCell<Option<EventBuilder>> = RefCell::new(None);
 }
 
 impl<T> Layer<T> for BufferLayer
 where
   T: Subscriber + for<'a> LookupSpan<'a>,
 {
-  /// Called for every tracing event.
-  ///
-  /// Converts the event into a minimal `Event` (timestamp + level + message)
-  /// and attempts to send it through the channel. Drops the event if the
-  /// channel is full, or logs an error if the channel is disconnected.
-  ///
-  /// # Parameters
-  /// - `event`: The `tracing::Event` being recorded.
-  /// - `_ctx`: The subscriber context (unused in this implementation).
   fn on_event(&self, event: &TracingEvent<'_>, _ctx: Context<'_, T>) {
-    // Capture timestamp and level
-    let ts = Utc::now().timestamp_millis() as u64;
-    let level = LogLevel::get_typo(event.metadata().level().as_str());
+    let interner = Arc::clone(&self.interner);
 
-    // Extract the message field using a visitor
-    let mut visitor = MessageVisitor::default();
-    event.record(&mut visitor);
-    let message: String = visitor.message.unwrap_or_default();
-    let target: &str = event.metadata().target();
+    // Use thread-local builder for maximum performance
+    LAYER_BUILDER.with(|builder_cell| {
+      let mut builder_opt = builder_cell.borrow_mut();
 
-    // Build a minimal Event
-    let new_event = EventBuilder::new_with_capacity(2)
-      .timestamp_nanos(ts)
-      .message(Cow::Owned(message))
-      .target(Cow::Borrowed(target))
-      .level(level)
-      .build();
+      // Initialize thread-local builder if needed
+      if builder_opt.is_none() {
+        *builder_opt = Some(EventBuilder::new(Arc::clone(&interner)));
+      }
 
-    // Attempt non-blocking send; drop if channel full
-    match self.sender.try_send(Message::Event(new_event)) {
-      Ok(_) => {},
-      Err(err) => match err {
-        TrySendError::Full(_) => {
-          // Optional: increment a dropped-events counter here
+      let builder = builder_opt.as_mut().unwrap();
+
+      // Extract all event data
+      let timestamp_millis = chrono::Utc::now().timestamp_millis() as u64;
+      let level = LogLevel::from_tracing_level(event.metadata().level());
+      let target = event.metadata().target();
+
+      // Extract message and fields using comprehensive visitor
+      let mut visitor = ComprehensiveVisitor::new(Arc::clone(&interner));
+      event.record(&mut visitor);
+
+      let message = visitor.message.as_deref().unwrap_or("");
+
+      // Build the complete event with all extracted data
+      let log_event = if visitor.fields.is_empty() {
+        builder.build_fast(timestamp_millis, level, target, message)
+      } else {
+        builder.build_with_fields(timestamp_millis, level, target, message, &visitor.fields)
+      };
+
+      // Attempt non-blocking send
+      match self.sender.try_send(Message::Event(log_event)) {
+        Ok(_) => {},
+        Err(err) => match err {
+          TrySendError::Full(_) => {
+            // Optional: increment a dropped-events counter here
+          },
+          TrySendError::Disconnected(_) => {
+            // Writer thread died; log error
+            eprintln!("[BufferLayer] writer thread disconnected");
+          },
         },
-        TrySendError::Disconnected(_) => {
-          // Writer thread died; log error
-          eprintln!("[BufferLayer] writer thread disconnected");
-        },
-      },
+      }
+    });
+  }
+}
+
+/// Comprehensive visitor that extracts message and all fields from tracing events
+pub struct ComprehensiveVisitor {
+  pub message: Option<String>,
+  pub fields: Vec<(String, FieldValue)>,
+  interner: Arc<StringInterner>,
+}
+
+impl ComprehensiveVisitor {
+  pub fn new(interner: Arc<StringInterner>) -> Self {
+    Self {
+      message: None,
+      fields: Vec::new(),
+      interner,
     }
   }
 }
 
-/// `MessageVisitor` is a helper struct used to extract a string message
-/// from structured tracing fields.
-///
-/// This is typically used when subscribing to tracing events and you want
-/// to capture a specific field (like a message) from the event in a uniform way.
-#[derive(Default)]
-struct MessageVisitor {
-  /// Stores the captured message from the tracing field.
-  pub message: Option<String>,
-}
-
-impl Visit for MessageVisitor {
-  /// Records a string field from a tracing event.
-  ///
-  /// # Parameters
-  /// - `_field`: The `Field` metadata (ignored in this implementation).
-  /// - `value`: The string value to record.
-  ///
-  /// # Behavior
-  /// Stores the string value in the `message` field, replacing any previous value.
-  fn record_str(&mut self, _field: &Field, value: &str) {
-    self.message = Some(value.to_string());
+impl tracing::field::Visit for ComprehensiveVisitor {
+  fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+    if field.name() == "message" {
+      self.message = Some(value.to_string());
+    } else {
+      self
+        .fields
+        .push((field.name().to_string(), FieldValue::F64(value)));
+    }
   }
 
-  /// Records a field that implements the `Debug` trait.
-  ///
-  /// # Parameters
-  /// - `_field`: The `Field` metadata (ignored in this implementation).
-  /// - `value`: The value to record, formatted using `Debug`.
-  ///
-  /// # Behavior
-  /// Converts the value to a string using `format!("{:?}", value)` and stores it
-  /// in the `message` field, replacing any previous value.
-  fn record_debug(&mut self, _field: &Field, value: &dyn std::fmt::Debug) {
-    self.message = Some(format!("{:?}", value));
+  fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+    if field.name() == "message" {
+      self.message = Some(value.to_string());
+    } else {
+      self
+        .fields
+        .push((field.name().to_string(), FieldValue::I64(value)));
+    }
+  }
+
+  fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+    if field.name() == "message" {
+      self.message = Some(value.to_string());
+    } else {
+      self
+        .fields
+        .push((field.name().to_string(), FieldValue::U64(value)));
+    }
+  }
+
+  fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+    if field.name() == "message" {
+      self.message = Some(value.to_string());
+    } else {
+      self
+        .fields
+        .push((field.name().to_string(), FieldValue::Bool(value)));
+    }
+  }
+
+  fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+    if field.name() == "message" {
+      self.message = Some(value.to_string());
+    } else {
+      // Intern the string and store as StringId
+      let string_id = self.interner.intern_field(value);
+      self
+        .fields
+        .push((field.name().to_string(), FieldValue::StringId(string_id)));
+    }
+  }
+
+  fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+    let debug_str = format!("{:?}", value);
+    if field.name() == "message" {
+      self.message = Some(debug_str);
+    } else {
+      // Intern the debug string
+      let string_id = self.interner.intern_field(&debug_str);
+      self
+        .fields
+        .push((field.name().to_string(), FieldValue::StringId(string_id)));
+    }
   }
 }

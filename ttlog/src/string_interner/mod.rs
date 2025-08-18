@@ -91,6 +91,7 @@ impl StringInterner {
 
     let mut storage_guard = storage.write().unwrap();
     let id = storage_guard.len() as u16;
+    println!("_______________________{:?}", hash);
 
     if id == u16::MAX {
       return 0;
@@ -119,13 +120,6 @@ impl StringInterner {
   ///
   /// # Returns
   /// A `u64` hash value representing the input string.
-  ///
-  /// # Example
-  /// ```rust
-  /// let interner = FastStringInterner::new();
-  /// let hash = interner.fast_hash("hello");
-  /// println!("Hash of 'hello': {}", hash);
-  /// ```
   #[inline]
   fn fast_hash(&self, s: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64; // FNV-1a offset basis
