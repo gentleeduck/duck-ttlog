@@ -19,7 +19,7 @@ TTLog is a **high-performance, distributed, non-blocking logging library** for R
 - **🔒 Lock-Free Ring Buffer**: Uses crossbeam's battle-tested ArrayQueue for maximum concurrency
 - **⚡ Non-Blocking Logging**: Uses crossbeam channels with `try_send` to prevent blocking
 - **🌐 Distributed Ready**: Designed for multi-node, multi-threaded distributed systems
-- **📈 High Throughput**: Benchmarked at 500K-2M events/second on high-end systems
+- **📈 High Throughput**: Benchmarked at **7.6M events/second** and **16.7M buffer operations/second** on modern systems
 
 ### **Reliability & Recovery**
 - **🛡️ Automatic Snapshots**: Creates compressed snapshots on panics, periodic intervals, or manual requests
@@ -40,24 +40,36 @@ TTLog is a **high-performance, distributed, non-blocking logging library** for R
 
 ## 🏗️ Architecture
 
-### **Core Components**
+### **Event Processing Pipeline**
 
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Application   │    │   BufferLayer    │    │  Writer Thread  │
-│                 │    │                  │    │                 │
-│  tracing::info! │───▶│  Captures Events │───▶│ Lock-Free Ring  │
-│                 │    │                  │    │     Buffer      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                         │
-                                                         ▼
-                                               ┌─────────────────┐
-                                               │   Snapshot      │
-                                               │   Creation      │
-                                               │                 │
-                                               │ CBOR + LZ4 +    │
-                                               │ Atomic Write    │
-                                               └─────────────────┘
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Application   │    │  EventBuilder +  │    │  Writer Thread  │    │   Snapshot      │
+│                 │    │ StringInterner   │    │                 │    │   Creation      │
+│  tracing::info! │───▶│                  │───▶│ Lock-Free Ring  │───▶│                 │
+│  ttlog::event!  │    │ • Field Capping │    │     Buffer      │    │ CBOR + LZ4 +    │
+│                 │    │ • String Intern │    │ • 1M+ capacity  │    │ Atomic Write    │
+└─────────────────┘    └──────────────────┘    └─────────────────┘    └─────────────────┘
+                                ▲                        │                        │
+                                │                        ▼                        ▼
+                       ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+                       │ Static Interner │    │ Concurrent Ops  │    │  Compressed     │
+                       │ (Thread-Safe)   │    │ 16.7M ops/sec   │    │  Log Files      │
+                       │                 │    │ 1024 threads    │    │ 136 bytes/event │
+                       └─────────────────┘    └─────────────────┘    └─────────────────┘
+```
+
+### **Performance Characteristics**
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        TTLog Performance Metrics                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 🚀 Throughput:          7.6M events/sec    │  Memory:     136 bytes/event   │
+│ ⚡ Buffer Ops:         16.7M ops/sec       │  Allocation: 3.2M allocs/sec   │
+│ 🔄 Concurrency:        1,024 threads       │  Throughput: 1.1 GB/sec       │
+│ 💾 Buffers:            100K concurrent     │  Efficiency: Lock-free design  │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### **Workspace Structure**
@@ -517,35 +529,60 @@ Notes:
 - If Criterion warns about not completing samples in 10s, either increase target time (env vars) or reduce samples:
   - `CRITERION_SAMPLE_SIZE=10 CRITERION_MEASUREMENT_TIME=30000 make bench`
 
-### Example Benchmark Report (excerpt)
+## 📊 Comprehensive Performance Results
 
-This is an example excerpt from `make benchmark-report` (full text in `benchmark_reports/comprehensive_report.txt`):
+### **Latest Benchmark Results** (max_performance suite)
 
 ```
-TTLog Benchmark Report - Mon Aug 18 11:03:33 AM EEST 2025
-================================================
+🔬 TTLog Maximum Performance Benchmark (Unified Output)
+==============================================
 
-System Information:
-  CPU: 16 cores
-  Memory: 38Gi
-  Rust Version: rustc 1.88.0 (6b00bc388 2025-06-23)
+📊 Throughput Test Results:
++--------------------------------------+------------------------------+-------------------+------------+----------+----------------------------+------------------------+
+| Test Name                            | Metric                       | Value             | Unit       | Duration | Config                     | Notes                  |
++--------------------------------------+------------------------------+-------------------+------------+----------+----------------------------+------------------------+
+| Maximum Events per Second            | Events per Second            | 7,627,434         | events/sec | 5.007s   | threads=16, buffer=1000000 | Total events: 38,188,606 |
+| Maximum Buffer Operations per Second | Buffer Operations per Second | 5,489,491         | ops/sec    | 5.043s   | threads=8, buffer=1000000  | Total ops: 27,683,700    |
++--------------------------------------+------------------------------+-------------------+------------+----------+----------------------------+------------------------+
 
-Running benchmarks...
-Gnuplot not found, using plotters backend
+📊 Concurrency Test Results:
++----------------------------+-----------------+--------+---------+----------+---------------------------+------------------------------------------+
+| Test Name                  | Metric          | Value  | Unit    | Duration | Config                    | Notes                                    |
++----------------------------+-----------------+--------+---------+----------+---------------------------+------------------------------------------+
+| Maximum Concurrent Threads | Maximum Threads | 1,024  | threads | 3.002s   | max_ops_per_sec=899787024 | Successfully ran 1024 concurrent threads |
+| Maximum Concurrent Buffers | Maximum Buffers | 100,000| buffers | 12.053s  | ops_per_buffer=100        | Total operations: 10,000,000             |
++----------------------------+-----------------+--------+---------+----------+---------------------------+------------------------------------------+
 
-distributed_node_performance/workers/1
-  time: [72.655 ms 72.928 ms 73.178 ms]
-...
-multi_node_cluster/nodes/2
-  time: [1.0155 s 1.0157 s 1.0159 s]
-...
-extreme_concurrency/extreme_buffer_operations
-  time: [368.06 ms 368.44 ms 368.90 ms]
-...
-extreme_serialization/cborevents/10000
-  time: [7.6944 ms 7.7031 ms 7.7116 ms]
-...
+📊 Memory Efficiency Results:
++---------------------------+------------------------+--------------------+-------------+----------+------------------+------------------------------------------------------------+
+| Test Name                 | Metric                 | Value              | Unit        | Duration | Config           | Notes                                                      |
++---------------------------+------------------------+--------------------+-------------+----------+------------------+------------------------------------------------------------+
+| Memory Allocation Rate    | Allocations per Second | 3,240,792          | allocs/sec  | 5.000s   | events=16203961  | Est. memory: 3.50 GB                                       |
+| Bytes per Event           | Memory Efficiency      | 136                | bytes/event | 0.017s   | events=41000     | Total calculated memory: 5.32 MB (includes field overhead) |
+| Memory Throughput         | Memory Processing Rate | 1,134,610,185      | bytes/sec   | 5.004s   | threads=8        | Total: 5.29 GB                                             |
++---------------------------+------------------------+--------------------+-------------+----------+------------------+------------------------------------------------------------+
+
+📊 Buffer Operations (Producer/Consumer Ratios):
++---------------+---------------+--------------------+-------------+----------+------------------------------------------+------------------------------------------------------------+
+| Test Name     | Metric        | Value              | Unit        | Duration | Config                                   | Notes                                                      |
++---------------+---------------+--------------------+-------------+----------+------------------------------------------+------------------------------------------------------------+
+| Buffer 1P/1C  | Ops per Second| 5,411,406          | ops/sec     | 5.000s   | producers=1, consumers=1, buffer=1000000 | total_ops=27,058,311, Balanced                             |
+| Buffer 2P/2C  | Ops per Second| 9,910,784          | ops/sec     | 5.000s   | producers=2, consumers=2, buffer=1000000 | total_ops=49,556,902, Balanced                             |
+| Buffer 4P/4C  | Ops per Second| 16,757,007         | ops/sec     | 5.000s   | producers=4, consumers=4, buffer=1000000 | total_ops=83,792,877, Balanced                             |
+| Buffer 8P/8C  | Ops per Second| 15,423,638         | ops/sec     | 5.001s   | producers=8, consumers=8, buffer=1000000 | total_ops=77,133,587, Balanced                             |
+| Buffer 8P/4C  | Ops per Second| 16,616,877         | ops/sec     | 5.001s   | producers=8, consumers=4, buffer=1000000 | total_ops=83,095,228, Producer heavy                       |
+| Buffer 4P/8C  | Ops per Second| 12,347,540         | ops/sec     | 5.001s   | producers=4, consumers=8, buffer=1000000 | total_ops=61,746,034, Consumer heavy                       |
++---------------+---------------+--------------------+-------------+----------+------------------------------------------+------------------------------------------------------------+
 ```
+
+### **Key Performance Highlights**
+
+- **🚀 Peak Throughput**: 7.6M events/second with 16 threads
+- **⚡ Buffer Operations**: Up to 16.7M operations/second (4P/4C configuration)
+- **🔄 Massive Concurrency**: Successfully handles 1,024 concurrent threads
+- **💾 Buffer Scalability**: Supports 100,000 concurrent buffers
+- **🧠 Memory Efficiency**: Only 136 bytes per event (including field overhead)
+- **📈 Memory Throughput**: 1.1 GB/second sustained processing rate
 
 To view full details (all groups and inputs), open:
 - `benchmark_reports/comprehensive_report.txt`
