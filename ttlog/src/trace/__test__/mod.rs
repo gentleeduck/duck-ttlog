@@ -1,25 +1,21 @@
 #[cfg(test)]
 mod __test__ {
-  use std::sync::Arc;
   use crossbeam_channel::bounded;
 
-  use crate::string_interner::StringInterner;
-  use crate::trace::{Message, Trace};
   use crate::event::LogLevel;
+  use crate::trace::{Message, Trace};
 
   #[test]
   fn trace_default_level_is_info() {
     let (tx, _rx) = bounded::<Message>(10);
-    let interner = Arc::new(StringInterner::new());
-    let trace = Trace::new(tx, interner);
+    let trace = Trace::new(tx);
     assert_eq!(trace.get_level(), LogLevel::INFO);
   }
 
   #[test]
   fn trace_set_and_get_level() {
     let (tx, _rx) = bounded::<Message>(10);
-    let interner = Arc::new(StringInterner::new());
-    let trace = Trace::new(tx, interner);
+    let trace = Trace::new(tx);
 
     trace.set_level(LogLevel::ERROR);
     assert_eq!(trace.get_level(), LogLevel::ERROR);
@@ -31,8 +27,7 @@ mod __test__ {
   #[test]
   fn trace_get_sender_clones_channel() {
     let (tx, rx) = bounded::<Message>(10);
-    let interner = Arc::new(StringInterner::new());
-    let trace = Trace::new(tx, interner);
+    let trace = Trace::new(tx);
 
     let cloned = trace.get_sender();
     cloned.try_send(Message::FlushAndExit).expect("send ok");
@@ -46,8 +41,7 @@ mod __test__ {
   #[test]
   fn trace_request_snapshot_enqueues_message() {
     let (tx, rx) = bounded::<Message>(10);
-    let interner = Arc::new(StringInterner::new());
-    let trace = Trace::new(tx, interner);
+    let trace = Trace::new(tx);
 
     trace.request_snapshot("manual-test");
     let msg = rx.recv().expect("recv ok");
