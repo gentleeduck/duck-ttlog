@@ -1,29 +1,21 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono;
 use tabled::{Table, Tabled};
 use ttlog::{
-  event::{FieldValue, LogEvent, LogLevel},
+  event::{LogEvent, LogLevel},
   event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
-  snapshot::SnapshotWriter,
   string_interner::StringInterner,
   trace::Trace,
 };
 
-#[cfg(feature = "jemalloc")]
-use jemalloc_ctl as jemctl;
-#[cfg(feature = "sysinfo")]
-use sysinfo::{MemoryRefreshKind, RefreshKind, System, SystemExt};
-
 // ============================================================================
-// Table Output Utilities
+// Unified Test Result Types
 // ============================================================================
 
-/// Represents a performance test result
 #[derive(Debug, Clone, Tabled)]
 struct TestResult {
   #[tabled(rename = "Test Name")]
@@ -36,11 +28,64 @@ struct TestResult {
   unit: String,
   #[tabled(rename = "Duration")]
   duration: String,
+  #[tabled(rename = "Config")]
+  config: String,
+  #[tabled(rename = "Notes")]
+  notes: String,
+}
+
+#[derive(Debug, Clone, Tabled)]
+struct BufferTest {
+  #[tabled(rename = "Test")]
+  test_name: String,
+  #[tabled(rename = "Producers")]
+  producers: usize,
+  #[tabled(rename = "Consumers")]
+  consumers: usize,
+  #[tabled(rename = "Buffer Size")]
+  buffer_size: usize,
+  #[tabled(rename = "Ops/Sec")]
+  ops_per_sec: f64,
+  #[tabled(rename = "Total Ops")]
+  total_ops: u64,
+  #[tabled(rename = "Duration")]
+  duration: String,
+  #[tabled(rename = "Notes")]
+  notes: String,
+}
+
+#[derive(Debug, Clone, Tabled)]
+struct ConcurrencyResult {
+  #[tabled(rename = "Thread Count")]
+  thread_count: usize,
+  #[tabled(rename = "Success")]
+  success: String,
+  #[tabled(rename = "Duration")]
+  duration: String,
+  #[tabled(rename = "Ops/Thread")]
+  ops_per_thread: u64,
+  #[tabled(rename = "Total Ops/Sec")]
+  total_ops_per_sec: f64,
+}
+
+#[derive(Debug, Clone, Tabled)]
+struct MemoryTestResult {
+  #[tabled(rename = "Test Name")]
+  test_name: String,
+  #[tabled(rename = "Metric")]
+  metric: String,
+  #[tabled(rename = "Value")]
+  value: f64,
+  #[tabled(rename = "Unit")]
+  unit: String,
+  #[tabled(rename = "Duration")]
+  duration: String,
+  #[tabled(rename = "Config")]
+  config: String,
   #[tabled(rename = "Additional Info")]
   additional_info: String,
 }
 
-/// Represents a summary metric
 #[derive(Debug, Clone, Tabled)]
 struct SummaryMetric {
   #[tabled(rename = "Metric")]
@@ -51,131 +96,47 @@ struct SummaryMetric {
   unit: String,
 }
 
-#[derive(Debug, Clone, Tabled)]
-struct MemoryMatrixRow {
-  #[tabled(rename = "Events")]
-  events: usize,
-  #[tabled(rename = "Fields/Event")]
-  fields_per_event: usize,
-  #[tabled(rename = "Msg Size (B)")]
-  message_size_bytes: usize,
-  #[tabled(rename = "Total Bytes (approx)")]
-  total_bytes_approx: usize,
-  #[tabled(rename = "Bytes/Event (approx)")]
-  bytes_per_event_approx: usize,
-  #[tabled(rename = "RSS Delta (MiB)")]
-  rss_delta_mib: f64,
-  #[tabled(rename = "Alloc Bytes (opt)")]
-  alloc_bytes_opt: String,
-}
-
-/// Formats a table of test results using tabled
-fn print_results_table(results: &[TestResult], title: &str) {
-  println!("\n{}", "=".repeat(100));
-  println!("{}", title);
-  println!("{}", "=".repeat(100));
-
-  if results.is_empty() {
-    println!("No results to display");
-    return;
-  }
-
-  let table = Table::new(results).to_string();
-  println!("{}", table);
-  println!("{}", "=".repeat(100));
-}
-
-/// Formats a summary table using tabled
-fn print_summary_table(summary: &[SummaryMetric], title: &str) {
-  println!("\n{}", "=".repeat(80));
-  println!("{}", title);
-  println!("{}", "=".repeat(80));
-
-  if summary.is_empty() {
-    println!("No summary to display");
-    return;
-  }
-
-  let table = Table::new(summary).to_string();
-  println!("{}", table);
-  println!("{}", "=".repeat(80));
-}
-
-fn current_thread_id_u64() -> u32 {
-  use std::collections::hash_map::DefaultHasher;
-  use std::hash::{Hash, Hasher};
-  let mut hasher = DefaultHasher::new();
-  thread::current().id().hash(&mut hasher);
-  hasher.finish() as u32
-}
-
 // ============================================================================
-// Maximum Performance Testing Components
+// Throughput Tester
 // ============================================================================
 
-/// Try to read current resident set size in bytes using sysinfo (if enabled)
-fn read_rss_bytes() -> Option<u64> {
-  #[cfg(feature = "sysinfo")]
-  {
-    let mut sys =
-      System::new_with_specifics(RefreshKind::new().with_memory(MemoryRefreshKind::everything()));
-    sys.refresh_memory();
-    return Some(sys.process(sysinfo::get_current_pid().ok()?)?.memory() * 1024);
-  }
-  None
-}
-
-/// Try to read jemalloc allocated bytes (if enabled)
-fn read_jemalloc_allocated_bytes() -> Option<u64> {
-  #[cfg(feature = "jemalloc")]
-  {
-    let epoch = jemctl::epoch::mib().ok()?;
-    let allocated = jemctl::stats::allocated::mib().ok()?;
-    let _ = epoch.advance();
-    return allocated.read().ok();
-  }
-  None
-}
-
-/// Tests maximum throughput capabilities
 struct ThroughputTester {
   test_duration: Duration,
-  event_count: Arc<AtomicU64>,
 }
 
 impl ThroughputTester {
   fn new(test_duration: Duration) -> Self {
-    Self {
-      test_duration,
-      event_count: Arc::new(AtomicU64::new(0)),
-    }
+    Self { test_duration }
   }
 
   /// Test maximum events per second
   fn max_events_per_second(&self, buffer_size: usize) -> TestResult {
     let start = Instant::now();
     let _trace_system = Trace::init(buffer_size, buffer_size / 10);
+    let event_count = Arc::new(AtomicU64::new(0));
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let thread_count = 16; // Optimal thread count for maximum throughput
 
-    let event_count = Arc::clone(&self.event_count);
-    let test_duration = self.test_duration;
-
-    // Create multiple high-frequency logging threads
-    let handles: Vec<_> = (0..16)
+    let handles: Vec<_> = (0..thread_count)
       .map(|thread_id| {
         let event_count = Arc::clone(&event_count);
-        thread::spawn(move || {
-          let mut local_count = 0;
-          let thread_start = Instant::now();
+        let stop_flag = Arc::clone(&stop_flag);
 
-          while thread_start.elapsed() < test_duration {
+        thread::spawn(move || {
+          let mut local_count = 0u64;
+
+          while !stop_flag.load(Ordering::Relaxed) {
             tracing::info!(
-                thread_id = thread_id,
-                event_id = local_count,
-                timestamp = %chrono::Utc::now(),
-                "High frequency event"
+              thread_id = thread_id,
+              event_id = local_count,
+              "High frequency event"
             );
             local_count += 1;
             event_count.fetch_add(1, Ordering::Relaxed);
+
+            if local_count % 10000 == 0 {
+              thread::yield_now();
+            }
           }
 
           local_count
@@ -183,25 +144,25 @@ impl ThroughputTester {
       })
       .collect();
 
-    // Wait for completion
+    thread::sleep(self.test_duration);
+    stop_flag.store(true, Ordering::Relaxed);
+
     for handle in handles {
       handle.join().unwrap();
     }
 
     let total_duration = start.elapsed();
-    let total_events = self.event_count.load(Ordering::Relaxed);
+    let total_events = event_count.load(Ordering::Relaxed);
     let events_per_second = total_events as f64 / total_duration.as_secs_f64();
 
     TestResult {
-      test_name: "High Frequency Events".to_string(),
+      test_name: "Maximum Events per Second".to_string(),
       metric: "Events per Second".to_string(),
       value: events_per_second,
       unit: "events/sec".to_string(),
-      duration: format!("{:?}", total_duration),
-      additional_info: format!(
-        "Total Events: {}, Threads: 16, Buffer Size: {}",
-        total_events, buffer_size
-      ),
+      duration: format!("{:.3}s", total_duration.as_secs_f64()),
+      config: format!("threads={}, buffer={}", thread_count, buffer_size),
+      notes: format!("Total events: {}", total_events),
     }
   }
 
@@ -209,91 +170,88 @@ impl ThroughputTester {
   fn max_buffer_operations(&self, buffer_size: usize) -> TestResult {
     let start = Instant::now();
     let buffer = Arc::new(LockFreeRingBuffer::<LogEvent>::new(buffer_size));
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let total_ops = Arc::new(AtomicU64::new(0));
+    let thread_count = 8; // Balanced for buffer operations
 
-    let operation_count = Arc::new(AtomicU64::new(0));
-    let test_duration = self.test_duration;
-
-    // Create producer and consumer threads
-    let producer_handles: Vec<_> = (0..8)
-      .map(|producer_id| {
+    let handles: Vec<_> = (0..thread_count)
+      .map(|thread_id| {
         let buffer = Arc::clone(&buffer);
-        let operation_count = Arc::clone(&operation_count);
-        thread::spawn(move || {
-          let mut local_ops = 0;
-          let thread_start = Instant::now();
+        let stop_flag = Arc::clone(&stop_flag);
+        let total_ops = Arc::clone(&total_ops);
 
-          while thread_start.elapsed() < test_duration {
-            let event = create_performance_event(producer_id, local_ops);
+        thread::spawn(move || {
+          let mut local_ops = 0u64;
+          let mut counter = 0u64;
+
+          while !stop_flag.load(Ordering::Relaxed) {
+            let event = create_minimal_event(thread_id as u64 * 1000000 + counter);
+            counter += 1;
+
+            // Push operation
             if buffer.push(event).is_ok() {
               local_ops += 1;
-              operation_count.fetch_add(1, Ordering::Relaxed);
+            }
+
+            // Pop operation (every 10th iteration to maintain balance)
+            if counter % 10 == 0 {
+              if buffer.pop().is_some() {
+                local_ops += 1;
+              }
+            }
+
+            if local_ops % 10000 == 0 {
+              thread::yield_now();
             }
           }
 
+          total_ops.fetch_add(local_ops, Ordering::Relaxed);
           local_ops
         })
       })
       .collect();
 
-    let consumer_handles: Vec<_> = (0..4)
-      .map(|_consumer_id| {
-        let buffer = Arc::clone(&buffer);
-        let operation_count = Arc::clone(&operation_count);
-        thread::spawn(move || {
-          let mut local_ops = 0;
-          let thread_start = Instant::now();
+    thread::sleep(self.test_duration);
+    stop_flag.store(true, Ordering::Relaxed);
 
-          while thread_start.elapsed() < test_duration {
-            if let Some(_) = buffer.pop() {
-              local_ops += 1;
-              operation_count.fetch_add(1, Ordering::Relaxed);
-            }
-          }
-
-          local_ops
-        })
-      })
-      .collect();
-
-    // Wait for completion
-    for handle in producer_handles {
-      handle.join().unwrap();
-    }
-    for handle in consumer_handles {
+    for handle in handles {
       handle.join().unwrap();
     }
 
     let total_duration = start.elapsed();
-    let total_operations = operation_count.load(Ordering::Relaxed);
+    let total_operations = total_ops.load(Ordering::Relaxed);
     let ops_per_second = total_operations as f64 / total_duration.as_secs_f64();
 
     TestResult {
-      test_name: "Buffer Operations".to_string(),
-      metric: "Operations per Second".to_string(),
+      test_name: "Maximum Buffer Operations per Second".to_string(),
+      metric: "Buffer Operations per Second".to_string(),
       value: ops_per_second,
       unit: "ops/sec".to_string(),
-      duration: format!("{:?}", total_duration),
-      additional_info: format!(
-        "Total Operations: {}, Producers: 8, Consumers: 4, Buffer Size: {}",
-        total_operations, buffer_size
-      ),
+      duration: format!("{:.3}s", total_duration.as_secs_f64()),
+      config: format!("threads={}, buffer={}", thread_count, buffer_size),
+      notes: format!("Total ops: {}", total_operations),
     }
   }
 }
 
-/// Tests maximum concurrency capabilities
-struct ConcurrencyTester;
+// ============================================================================
+// Concurrency Tester
+// ============================================================================
+
+struct ConcurrencyTester {
+  test_duration: Duration,
+}
 
 impl ConcurrencyTester {
-  fn new(_test_duration: Duration) -> Self {
-    Self
+  fn new(test_duration: Duration) -> Self {
+    Self { test_duration }
   }
 
   /// Test maximum concurrent threads
   fn max_concurrent_threads(&self, max_threads: usize) -> TestResult {
     let start = Instant::now();
     let mut successful_threads = 0;
-    let mut test_results = Vec::new();
+    let mut max_ops_per_sec: f64 = 0.0;
 
     for thread_count in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024].iter() {
       if *thread_count > max_threads {
@@ -301,23 +259,43 @@ impl ConcurrencyTester {
       }
 
       let test_start = Instant::now();
-      let mut handles = Vec::new();
+      let total_ops = Arc::new(AtomicU64::new(0));
+      let stop_flag = Arc::new(AtomicBool::new(false));
 
-      // Create test threads
-      for i in 0..*thread_count {
-        let handle = thread::spawn(move || {
-          let mut local_count = 0;
-          for j in 0..1000 {
-            // Simulate some work
-            let _ = (i * j).wrapping_mul(7).rotate_left(3);
-            local_count += 1;
-          }
-          local_count
-        });
-        handles.push(handle);
-      }
+      let handles: Vec<_> = (0..*thread_count)
+        .map(|thread_id| {
+          let total_ops = Arc::clone(&total_ops);
+          let stop_flag = Arc::clone(&stop_flag);
 
-      // Wait for completion
+          thread::spawn(move || {
+            let mut local_ops = 0u64;
+            let mut counter = 0u64;
+
+            while !stop_flag.load(Ordering::Relaxed) {
+              // Simulate work
+              let hash = thread_id
+                .wrapping_mul(counter as usize)
+                .wrapping_add(0xdeadbeef);
+              let _result = hash.rotate_left(7).wrapping_mul(0x9e3779b9);
+
+              counter += 1;
+              local_ops += 1;
+
+              if local_ops % 1000 == 0 {
+                thread::yield_now();
+              }
+            }
+
+            total_ops.fetch_add(local_ops, Ordering::Relaxed);
+            local_ops
+          })
+        })
+        .collect();
+
+      // Run for 100ms
+      thread::sleep(Duration::from_millis(100));
+      stop_flag.store(true, Ordering::Relaxed);
+
       let mut all_successful = true;
       for handle in handles {
         if handle.join().is_err() {
@@ -326,19 +304,14 @@ impl ConcurrencyTester {
         }
       }
 
-      let thread_duration = test_start.elapsed();
+      let test_duration = test_start.elapsed();
+      let ops = total_ops.load(Ordering::Relaxed);
+      let ops_per_sec = ops as f64 / test_duration.as_secs_f64();
 
-      if all_successful && thread_duration < Duration::from_secs(30) {
+      if all_successful && test_duration < Duration::from_secs(10) {
         successful_threads = *thread_count;
-        test_results.push(format!(
-          "✅ {} threads: {:?}",
-          thread_count, thread_duration
-        ));
+        max_ops_per_sec = max_ops_per_sec.max(ops_per_sec);
       } else {
-        test_results.push(format!(
-          "❌ {} threads: {:?}",
-          thread_count, thread_duration
-        ));
         break;
       }
     }
@@ -346,12 +319,13 @@ impl ConcurrencyTester {
     let total_duration = start.elapsed();
 
     TestResult {
-      test_name: "Concurrent Threads".to_string(),
+      test_name: "Maximum Concurrent Threads".to_string(),
       metric: "Maximum Threads".to_string(),
       value: successful_threads as f64,
       unit: "threads".to_string(),
-      duration: format!("{:?}", total_duration),
-      additional_info: test_results.join(", "),
+      duration: format!("{:.3}s", total_duration.as_secs_f64()),
+      config: format!("max_ops_per_sec={:.0}", max_ops_per_sec),
+      notes: format!("Successfully ran {} concurrent threads", successful_threads),
     }
   }
 
@@ -359,7 +333,7 @@ impl ConcurrencyTester {
   fn max_concurrent_buffers(&self, max_buffers: usize) -> TestResult {
     let start = Instant::now();
     let mut successful_buffers = 0;
-    let mut test_results = Vec::new();
+    let mut total_operations = 0u64;
 
     for buffer_count in [1, 10, 100, 1000, 10000, 100000].iter() {
       if *buffer_count > max_buffers {
@@ -369,17 +343,22 @@ impl ConcurrencyTester {
       let test_start = Instant::now();
       let mut buffers = Vec::new();
 
-      // Create test buffers
+      // Create buffers
       for _i in 0..*buffer_count {
-        let buffer = LockFreeRingBuffer::<i32>::new(1000);
+        let buffer = LockFreeRingBuffer::<LogEvent>::new(1000);
         buffers.push(buffer);
       }
 
       // Test operations on all buffers
+      let mut operations = 0u64;
       let mut all_successful = true;
+
       for (i, buffer) in buffers.iter().enumerate() {
         for j in 0..100 {
-          if buffer.push((i * 100 + j) as i32).is_err() {
+          let event = create_minimal_event((i * 100 + j) as u64);
+          if buffer.push(event).is_ok() {
+            operations += 1;
+          } else {
             all_successful = false;
             break;
           }
@@ -389,19 +368,12 @@ impl ConcurrencyTester {
         }
       }
 
-      let buffer_duration = test_start.elapsed();
+      let test_duration = test_start.elapsed();
 
-      if all_successful && buffer_duration < Duration::from_secs(30) {
+      if all_successful && test_duration < Duration::from_secs(30) {
         successful_buffers = *buffer_count;
-        test_results.push(format!(
-          "✅ {} buffers: {:?}",
-          buffer_count, buffer_duration
-        ));
+        total_operations = operations;
       } else {
-        test_results.push(format!(
-          "❌ {} buffers: {:?}",
-          buffer_count, buffer_duration
-        ));
         break;
       }
     }
@@ -409,506 +381,603 @@ impl ConcurrencyTester {
     let total_duration = start.elapsed();
 
     TestResult {
-      test_name: "Concurrent Buffers".to_string(),
+      test_name: "Maximum Concurrent Buffers".to_string(),
       metric: "Maximum Buffers".to_string(),
       value: successful_buffers as f64,
       unit: "buffers".to_string(),
-      duration: format!("{:?}", total_duration),
-      additional_info: test_results.join(", "),
+      duration: format!("{:.3}s", total_duration.as_secs_f64()),
+      config: format!("ops_per_buffer=100"),
+      notes: format!("Total operations: {}", total_operations),
     }
   }
 }
 
-/// Tests maximum memory efficiency
-struct MemoryEfficiencyTester;
+// ============================================================================
+// Memory Efficiency Tester
+// ============================================================================
+
+struct MemoryEfficiencyTester {
+  test_duration: Duration,
+}
 
 impl MemoryEfficiencyTester {
-  fn new(_test_duration: Duration) -> Self {
-    Self
+  fn new(test_duration: Duration) -> Self {
+    Self { test_duration }
   }
 
-  /// Estimate bytes per LogEvent (compact fixed-size struct)
-  fn estimate_event_bytes(_event: &LogEvent) -> usize {
-    std::mem::size_of::<LogEvent>()
-  }
+  /// Test memory allocation rate
+  fn max_memory_allocation_rate(&self) -> TestResult {
+    let start = Instant::now();
+    let mut events = Vec::new();
+    let mut allocation_count = 0u64;
 
-  /// Test memory matrix across (events x fields x message size)
-  fn memory_matrix(&self) -> Vec<MemoryMatrixRow> {
-    let mut rows = Vec::new();
+    while start.elapsed() < self.test_duration {
+      let event = create_minimal_event(allocation_count);
+      events.push(event);
+      allocation_count += 1;
 
-    let event_counts = [1_000usize, 10_000, 100_000];
-    // LogEvent supports up to 3 fields; cap here
-    let fields_options = [0usize, 1, 3];
-    let message_sizes = [32usize, 128, 512];
-
-    // Baseline RSS / jemalloc allocated
-    let rss_before = read_rss_bytes();
-    let alloc_before = read_jemalloc_allocated_bytes();
-
-    for &count in &event_counts {
-      for &fields_per_event in &fields_options {
-        for &msg_size in &message_sizes {
-          // Build synthetic events using EventBuilder and StringInterner
-          static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
-          let interner = INTERNER
-            .get_or_init(|| Arc::new(StringInterner::new()))
-            .clone();
-          thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
-
-          let mut events = Vec::with_capacity(count);
-          let mut approx_total = 0usize;
-          for i in 0..count {
-            let event = BUILDER.with(|cell| {
-              if cell.borrow().is_none() {
-                *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
-              }
-              let mut builder_ref = cell.borrow_mut();
-              let builder = builder_ref.as_mut().unwrap();
-              let ts = i as u64;
-              let message = "m".repeat(msg_size);
-              if fields_per_event == 0 {
-                builder.build_fast(ts, LogLevel::INFO, "matrix", &message)
-              } else {
-                // Up to 3 fields
-                let mut fields: Vec<(String, FieldValue)> = Vec::new();
-                let limit = fields_per_event.min(3);
-                for j in 0..limit {
-                  let key = format!("k{}", j);
-                  let val = match j % 4 {
-                    0 => FieldValue::U64(i as u64),
-                    1 => FieldValue::I64((i as i64) * 7),
-                    2 => FieldValue::F64((i as f64) * 3.14),
-                    _ => FieldValue::Bool(i % 2 == 0),
-                  };
-                  fields.push((key, val));
-                }
-                builder.build_with_fields(ts, LogLevel::INFO, "matrix", &message, &fields)
-              }
-            });
-            approx_total += Self::estimate_event_bytes(&event);
-            events.push(event);
-          }
-
-          // Touch the data to prevent optimizations
-          let _checksum: u64 = events.iter().map(|e| e.packed_meta as u64).sum();
-
-          // Measure deltas
-          let rss_after = read_rss_bytes();
-          let alloc_after = read_jemalloc_allocated_bytes();
-          let rss_delta_mib = match (rss_before, rss_after) {
-            (Some(b), Some(a)) if a > b => (a - b) as f64 / (1024.0 * 1024.0),
-            _ => 0.0,
-          };
-          let alloc_delta = match (alloc_before, alloc_after) {
-            (Some(b), Some(a)) if a > b => format!("{}", a - b),
-            _ => "-".to_string(),
-          };
-
-          rows.push(MemoryMatrixRow {
-            events: count,
-            fields_per_event,
-            message_size_bytes: msg_size,
-            total_bytes_approx: approx_total,
-            bytes_per_event_approx: approx_total / count.max(1),
-            rss_delta_mib,
-            alloc_bytes_opt: alloc_delta,
-          });
-
-          // Free
-          drop(events);
-        }
+      // Prevent excessive memory usage
+      if events.len() > 100000 {
+        events.clear();
       }
     }
 
-    rows
+    let duration = start.elapsed();
+    let allocations_per_second = allocation_count as f64 / duration.as_secs_f64();
+
+    TestResult {
+      test_name: "Memory Allocation Rate".to_string(),
+      metric: "Allocations per Second".to_string(),
+      value: allocations_per_second,
+      unit: "allocs/sec".to_string(),
+      duration: format!("{:.3}s", duration.as_secs_f64()),
+      config: format!("events={}", allocation_count),
+      notes: format!(
+        "Est. memory: {}",
+        Self::format_bytes((allocation_count as f64 * Self::estimate_event_size() as f64) as usize)
+      ),
+    }
   }
 
-  /// Test maximum memory efficiency
-  fn max_memory_efficiency(&self) -> TestResult {
+  /// Test bytes per event efficiency
+  fn bytes_per_event_efficiency(&self) -> TestResult {
     let start = Instant::now();
-
-    // Build a small controlled set to estimate bytes per event
-    let mut total_memory = 0usize;
+    let test_counts = vec![1000, 5000, 10000, 25000];
     let mut total_events = 0usize;
-    let mut test_details = Vec::new();
+    let mut total_calculated_memory = 0usize;
 
-    for event_size in [100, 1_000, 10_000].iter() {
-      let test_start = Instant::now();
-      let mut events: Vec<LogEvent> = (0..*event_size)
-        .map(|i| create_large_event(i as u64))
+    for count in test_counts {
+      let events: Vec<LogEvent> = (0..count)
+        .map(|i| create_variable_size_event(i as u64))
         .collect();
 
-      // Estimate memory (struct + strings + fields, with alignment)
-      let mut memory_usage = 0usize;
+      total_events += events.len();
+      
+      // Calculate more accurate memory usage per event
       for event in &events {
-        memory_usage += Self::estimate_event_bytes(event);
+        let mut event_memory = std::mem::size_of::<LogEvent>();
+        
+        // Add estimated field data size based on field count
+        event_memory += event.field_count as usize * 16; // Rough estimate per field
+        
+        // Add message overhead (strings are interned, so minimal per-event cost)
+        event_memory += 32; // Estimated overhead for interned strings and metadata
+        
+        total_calculated_memory += event_memory;
       }
-      total_memory += memory_usage;
-      total_events += *event_size;
 
-      let test_duration = test_start.elapsed();
-      test_details.push(format!(
-        "{} events: {} approx bytes in {:?}",
-        event_size, memory_usage, test_duration
-      ));
-
-      // Ensure events are used (avoid optimizing away)
-      events.retain(|e| e.field_count > 0);
+      // Ensure events aren't optimized away
+      let _check = events.first().map(|e| e.packed_meta);
     }
 
-    let total_duration = start.elapsed();
-    let memory_per_event = if total_events > 0 {
-      total_memory as f64 / total_events as f64
+    let duration = start.elapsed();
+    let bytes_per_event = if total_events > 0 {
+      total_calculated_memory as f64 / total_events as f64
     } else {
       0.0
     };
 
     TestResult {
-      test_name: "Memory Efficiency".to_string(),
-      metric: "Memory per Event (approx)".to_string(),
-      value: memory_per_event,
+      test_name: "Bytes per Event (Calculated)".to_string(),
+      metric: "Memory Efficiency".to_string(),
+      value: bytes_per_event,
       unit: "bytes/event".to_string(),
-      duration: format!("{:?}", total_duration),
-      additional_info: test_details.join(", "),
-    }
-  }
-
-  /// Test maximum snapshot performance
-  fn max_snapshot_performance(&self) -> TestResult {
-    let start = Instant::now();
-
-    let mut total_snapshots = 0;
-    let mut total_events = 0;
-    let mut test_details = Vec::new();
-
-    for event_count in [1_000, 10_000, 100_000].iter() {
-      let test_start = Instant::now();
-
-      // Create buffer with events
-      let mut buffer = LockFreeRingBuffer::<LogEvent>::new(*event_count);
-      for i in 0..*event_count {
-        let event = create_performance_event(0, i as u64);
-        buffer.push(event).unwrap();
-      }
-
-      // Create snapshot
-      let writer = SnapshotWriter::new("max_performance_test");
-      if let Some(_) = writer.create_snapshot(&mut buffer, "performance_test") {
-        total_snapshots += 1;
-        total_events += *event_count;
-      }
-
-      let test_duration = test_start.elapsed();
-      test_details.push(format!("{} events: {:?}", event_count, test_duration));
-    }
-
-    let total_duration = start.elapsed();
-    let events_per_second = total_events as f64 / total_duration.as_secs_f64();
-
-    TestResult {
-      test_name: "Snapshot Performance".to_string(),
-      metric: "Events per Second".to_string(),
-      value: events_per_second,
-      unit: "events/sec".to_string(),
-      duration: format!("{:?}", total_duration),
-      additional_info: format!(
-        "Total Snapshots: {}, Total Events: {}, {}",
-        total_snapshots,
-        total_events,
-        test_details.join(", ")
+      duration: format!("{:.3}s", duration.as_secs_f64()),
+      config: format!("events={}", total_events),
+      notes: format!(
+        "Total calculated memory: {} (includes field overhead)",
+        Self::format_bytes(total_calculated_memory)
       ),
     }
   }
+
+  /// Test peak memory throughput
+  fn max_memory_throughput(&self) -> TestResult {
+    let start = Instant::now();
+    let buffer = Arc::new(LockFreeRingBuffer::<LogEvent>::new(100000));
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let total_bytes = Arc::new(AtomicU64::new(0));
+    let thread_count = 8;
+
+    let handles: Vec<_> = (0..thread_count)
+      .map(|thread_id| {
+        let buffer = Arc::clone(&buffer);
+        let stop_flag = Arc::clone(&stop_flag);
+        let total_bytes = Arc::clone(&total_bytes);
+
+        thread::spawn(move || {
+          let mut local_bytes = 0u64;
+          let mut counter = 0u64;
+
+          while !stop_flag.load(Ordering::Relaxed) {
+            let event = create_minimal_event(thread_id as u64 * 1000000 + counter);
+            let event_size = Self::estimate_event_size() as u64;
+
+            if buffer.push(event).is_ok() {
+              local_bytes += event_size;
+              counter += 1;
+            }
+
+            // Consume occasionally
+            if counter % 100 == 0 {
+              if buffer.pop().is_some() {
+                // Event consumed
+              }
+            }
+
+            if counter % 1000 == 0 {
+              thread::yield_now();
+            }
+          }
+
+          total_bytes.fetch_add(local_bytes, Ordering::Relaxed);
+          local_bytes
+        })
+      })
+      .collect();
+
+    thread::sleep(self.test_duration);
+    stop_flag.store(true, Ordering::Relaxed);
+
+    for handle in handles {
+      handle.join().unwrap();
+    }
+
+    let duration = start.elapsed();
+    let total_bytes_processed = total_bytes.load(Ordering::Relaxed);
+    let bytes_per_second = total_bytes_processed as f64 / duration.as_secs_f64();
+
+    TestResult {
+      test_name: "Memory Throughput".to_string(),
+      metric: "Memory Processing Rate".to_string(),
+      value: bytes_per_second,
+      unit: "bytes/sec".to_string(),
+      duration: format!("{:.3}s", duration.as_secs_f64()),
+      config: format!("threads={}", thread_count),
+      notes: format!(
+        "Total: {}",
+        Self::format_bytes(total_bytes_processed as usize)
+      ),
+    }
+  }
+
+  /// Estimate memory size of a standard event
+  fn estimate_event_size() -> usize {
+    std::mem::size_of::<LogEvent>() + 128 // Base size + estimated overhead
+  }
+
+  /// Format bytes in human-readable format
+  fn format_bytes(bytes: usize) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+      size /= 1024.0;
+      unit_index += 1;
+    }
+
+    format!("{:.2} {}", size, UNITS[unit_index])
+  }
 }
 
 // ============================================================================
-// Main Performance Testing Functions
+// Buffer Operations Tester
 // ============================================================================
 
-fn run_memory_efficiency_tests() {
-  println!("🚀 Starting Maximum Memory Efficiency Tests...");
-  println!("==============================================");
-
-  let tester = MemoryEfficiencyTester::new(Duration::from_secs(30));
-  let mut results = Vec::new();
-
-  // Test 1: Maximum memory efficiency (approximate per event)
-  println!("\n📊 Test 1: Memory Efficiency (Approx)");
-  let memory_efficiency_result = tester.max_memory_efficiency();
-  results.push(memory_efficiency_result.clone());
-
-  // Test 2: Memory Matrix (events x fields x message size)
-  println!("\n📊 Test 2: Memory Matrix (Events × Fields × Message Size)");
-  let matrix = tester.memory_matrix();
-  let table = Table::new(&matrix).to_string();
-  println!("{}", table);
-
-  // Display results in table format
-  print_results_table(&results, "🚀 MEMORY EFFICIENCY TEST RESULTS");
-
-  // Create summary
-  let summary = vec![SummaryMetric {
-    metric: "Approx Bytes per Event".to_string(),
-    value: results
-      .iter()
-      .find(|r| r.test_name == "Memory Efficiency")
-      .map(|r| r.value)
-      .unwrap_or(0.0),
-    unit: "bytes/event".to_string(),
-  }];
-  print_summary_table(&summary, "📊 MEMORY EFFICIENCY SUMMARY");
-
-  println!("\n🎉 Memory efficiency tests completed!");
+struct BufferOperationsTester {
+  test_duration: Duration,
 }
 
-fn run_throughput_tests() {
-  println!("🚀 Starting Maximum Throughput Tests...");
-  println!("=======================================");
+impl BufferOperationsTester {
+  fn new(test_duration: Duration) -> Self {
+    Self { test_duration }
+  }
 
-  let tester = ThroughputTester::new(Duration::from_secs(10));
-  let mut results = Vec::new();
+  /// Test various producer/consumer ratios
+  fn test_producer_consumer_ratios(&self, buffer_size: usize) -> Vec<BufferTest> {
+    let configs = vec![
+      (1, 1), // Balanced small
+      (2, 2), // Balanced medium
+      (4, 4), // Balanced optimal
+      (8, 8), // Balanced high
+      (8, 4), // Producer heavy
+      (4, 8), // Consumer heavy
+    ];
 
-  // Test 1: Maximum events per second
-  println!("\n📊 Test 1: Maximum Events Per Second");
-  let max_events_result = tester.max_events_per_second(1_000_000);
-  results.push(max_events_result.clone());
+    let mut results = Vec::new();
 
-  // Test 2: Maximum buffer operations
-  println!("\n📊 Test 2: Maximum Buffer Operations");
-  let max_ops_result = tester.max_buffer_operations(1_000_000);
-  results.push(max_ops_result.clone());
+    for (producers, consumers) in configs {
+      let result = self.test_buffer_operations(buffer_size, producers, consumers);
+      results.push(result);
+    }
 
-  // Display results in table format
-  print_results_table(&results, "🚀 THROUGHPUT TEST RESULTS");
+    results
+  }
 
-  // Create summary
-  let summary = vec![
-    SummaryMetric {
-      metric: "Maximum Events per Second".to_string(),
-      value: results[0].value,
-      unit: results[0].unit.clone(),
-    },
-    SummaryMetric {
-      metric: "Maximum Buffer Operations per Second".to_string(),
-      value: results[1].value,
-      unit: results[1].unit.clone(),
-    },
-  ];
-  print_summary_table(&summary, "📊 THROUGHPUT SUMMARY");
+  fn test_buffer_operations(
+    &self,
+    buffer_size: usize,
+    producers: usize,
+    consumers: usize,
+  ) -> BufferTest {
+    let buffer = Arc::new(LockFreeRingBuffer::<LogEvent>::new(buffer_size));
+    let start = Instant::now();
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let total_ops = Arc::new(AtomicU64::new(0));
 
-  println!("\n🎉 Throughput tests completed!");
-}
+    // Producer threads
+    let producer_handles: Vec<_> = (0..producers)
+      .map(|producer_id| {
+        let buffer = Arc::clone(&buffer);
+        let stop_flag = Arc::clone(&stop_flag);
+        let total_ops = Arc::clone(&total_ops);
 
-fn run_concurrency_tests() {
-  println!("🚀 Starting Maximum Concurrency Tests...");
-  println!("========================================");
+        thread::spawn(move || {
+          let mut local_ops = 0u64;
+          let mut event_counter = 0u64;
 
-  let tester = ConcurrencyTester::new(Duration::from_secs(60));
-  let mut results = Vec::new();
+          while !stop_flag.load(Ordering::Relaxed) {
+            let event = create_minimal_event(producer_id as u64 * 1000000 + event_counter);
+            event_counter += 1;
 
-  // Test 1: Maximum concurrent threads
-  println!("\n📊 Test 1: Maximum Concurrent Threads");
-  let max_threads_result = tester.max_concurrent_threads(1024);
-  results.push(max_threads_result.clone());
+            buffer.push_overwrite(event);
+            local_ops += 1;
 
-  // Test 2: Maximum concurrent buffers
-  println!("\n📊 Test 2: Maximum Concurrent Buffers");
-  let max_buffers_result = tester.max_concurrent_buffers(100_000);
-  results.push(max_buffers_result.clone());
+            if local_ops % 10000 == 0 {
+              thread::yield_now();
+            }
+          }
 
-  // Display results in table format
-  print_results_table(&results, "🚀 CONCURRENCY TEST RESULTS");
+          total_ops.fetch_add(local_ops, Ordering::Relaxed);
+          local_ops
+        })
+      })
+      .collect();
 
-  // Create summary
-  let summary = vec![
-    SummaryMetric {
-      metric: "Maximum Concurrent Threads".to_string(),
-      value: results[0].value,
-      unit: results[0].unit.clone(),
-    },
-    SummaryMetric {
-      metric: "Maximum Concurrent Buffers".to_string(),
-      value: results[1].value,
-      unit: results[1].unit.clone(),
-    },
-  ];
-  print_summary_table(&summary, "📊 CONCURRENCY SUMMARY");
+    // Consumer threads
+    let consumer_handles: Vec<_> = (0..consumers)
+      .map(|_consumer_id| {
+        let buffer = Arc::clone(&buffer);
+        let stop_flag = Arc::clone(&stop_flag);
+        let total_ops = Arc::clone(&total_ops);
 
-  println!("\n🎉 Concurrency tests completed!");
-}
+        thread::spawn(move || {
+          let mut local_ops = 0u64;
 
-fn run_comprehensive_performance_tests() {
-  println!("🚀 Starting Comprehensive Maximum Performance Tests...");
-  println!("=====================================================");
+          while !stop_flag.load(Ordering::Relaxed) {
+            if buffer.pop().is_some() {
+              local_ops += 1;
+            } else {
+              thread::yield_now();
+            }
 
-  let start = Instant::now();
-  let mut all_results = Vec::new();
-  let mut all_summaries = Vec::new();
+            if local_ops % 10000 == 0 {
+              thread::yield_now();
+            }
+          }
 
-  // Run throughput tests and collect results
-  println!("\n📊 Running Throughput Tests...");
-  let tester_throughput = ThroughputTester::new(Duration::from_secs(10));
-  let max_events_result = tester_throughput.max_events_per_second(1_000_000);
-  let max_ops_result = tester_throughput.max_buffer_operations(1_000_000);
-  all_results.extend_from_slice(&[max_events_result.clone(), max_ops_result.clone()]);
-  all_summaries.extend_from_slice(&[
-    SummaryMetric {
-      metric: "Maximum Events per Second".to_string(),
-      value: max_events_result.value,
-      unit: max_events_result.unit.clone(),
-    },
-    SummaryMetric {
-      metric: "Maximum Buffer Operations per Second".to_string(),
-      value: max_ops_result.value,
-      unit: max_ops_result.unit.clone(),
-    },
-  ]);
+          total_ops.fetch_add(local_ops, Ordering::Relaxed);
+          local_ops
+        })
+      })
+      .collect();
 
-  // Run concurrency tests and collect results
-  println!("\n📊 Running Concurrency Tests...");
-  let tester_concurrency = ConcurrencyTester::new(Duration::from_secs(60));
-  let max_threads_result = tester_concurrency.max_concurrent_threads(1024);
-  let max_buffers_result = tester_concurrency.max_concurrent_buffers(100_000);
-  all_results.extend_from_slice(&[max_threads_result.clone(), max_buffers_result.clone()]);
-  all_summaries.extend_from_slice(&[
-    SummaryMetric {
-      metric: "Maximum Concurrent Threads".to_string(),
-      value: max_threads_result.value,
-      unit: max_threads_result.unit.clone(),
-    },
-    SummaryMetric {
-      metric: "Maximum Concurrent Buffers".to_string(),
-      value: max_buffers_result.value,
-      unit: max_buffers_result.unit.clone(),
-    },
-  ]);
+    thread::sleep(self.test_duration);
+    stop_flag.store(true, Ordering::Relaxed);
 
-  // Run memory efficiency tests and collect results
-  println!("\n📊 Running Memory Efficiency Tests...");
-  let tester_memory = MemoryEfficiencyTester::new(Duration::from_secs(30));
-  let memory_efficiency_result = tester_memory.max_memory_efficiency();
-  all_results.push(memory_efficiency_result.clone());
-  all_summaries.push(SummaryMetric {
-    metric: "Approx Bytes per Event".to_string(),
-    value: memory_efficiency_result.value,
-    unit: memory_efficiency_result.unit.clone(),
-  });
+    for handle in producer_handles {
+      handle.join().unwrap();
+    }
+    for handle in consumer_handles {
+      handle.join().unwrap();
+    }
 
-  let total_duration = start.elapsed();
+    let duration = start.elapsed();
+    let ops = total_ops.load(Ordering::Relaxed);
+    let ops_per_sec = ops as f64 / duration.as_secs_f64();
 
-  // Display comprehensive results table
-  print_results_table(&all_results, "🚀 COMPREHENSIVE PERFORMANCE TEST RESULTS");
+    let notes = if producers > consumers {
+      "Producer heavy".to_string()
+    } else if consumers > producers {
+      "Consumer heavy".to_string()
+    } else {
+      "Balanced".to_string()
+    };
 
-  // Display grand summary
-  print_summary_table(&all_summaries, "📊 GRAND PERFORMANCE SUMMARY");
-
-  // Display final statistics
-  println!("\n{}", "=".repeat(80));
-  println!("🎉 COMPREHENSIVE PERFORMANCE TEST COMPLETED!");
-  println!("{}", "=".repeat(80));
-  println!("🚀 Total Test Duration: {:?}", total_duration);
-  println!("🚀 Total Tests Run: {}", all_results.len());
-  println!("🚀 TTLog has been tested at its absolute performance limits!");
-  println!("{}", "=".repeat(80));
+    BufferTest {
+      test_name: format!("{}P/{}C", producers, consumers),
+      producers,
+      consumers,
+      buffer_size,
+      ops_per_sec,
+      total_ops: ops,
+      duration: format!("{:.3}s", duration.as_secs_f64()),
+      notes,
+    }
+  }
 }
 
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
-fn create_performance_event(thread_id: u32, event_id: u64) -> LogEvent {
+fn create_minimal_event(counter: u64) -> LogEvent {
   static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
-  thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
-  let interner = INTERNER
-    .get_or_init(|| Arc::new(StringInterner::new()))
-    .clone();
+  let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new()));
 
-  BUILDER.with(|cell| {
-    if cell.borrow().is_none() {
-      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
-    }
-    let mut mut_ref = cell.borrow_mut();
-    let builder = mut_ref.as_mut().unwrap();
-    let ts = chrono::Utc::now().timestamp_millis() as u64;
-    let msg = format!("Performance event {} from thread {}", event_id, thread_id);
-    let fields: Vec<(String, FieldValue)> = vec![
-      ("thread_id".to_string(), FieldValue::U64(thread_id as u64)),
-      ("event_id".to_string(), FieldValue::U64(event_id)),
-      ("timestamp".to_string(), FieldValue::U64(ts)),
-    ];
-    builder.build_with_fields(ts, LogLevel::INFO, "max_performance", &msg, &fields)
-  })
-}
-
-fn create_large_event(event_id: u64) -> LogEvent {
-  static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
-  thread_local! { static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None); }
-  let interner = INTERNER
-    .get_or_init(|| Arc::new(StringInterner::new()))
-    .clone();
-
-  BUILDER.with(|cell| {
-    if cell.borrow().is_none() {
-      *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
-    }
-    let mut mut_ref = cell.borrow_mut();
-    let builder = mut_ref.as_mut().unwrap();
-    let ts = chrono::Utc::now().timestamp_millis() as u64;
-    let msg = format!("Large event {} with extensive fields", event_id);
-    // Choose 3 representative fields
-    let fields: Vec<(String, FieldValue)> = vec![
-      ("event_id".to_string(), FieldValue::U64(event_id)),
-      // simulate large strings via interning: store the interned id
-      (
-        "large_str".to_string(),
-        FieldValue::StringId(interner.intern_field("long_string_payload")),
-      ),
-      (
-        "numeric".to_string(),
-        FieldValue::I64(event_id as i64 * 1000),
-      ),
-    ];
-    builder.build_with_fields(ts, LogLevel::INFO, "large_event", &msg, &fields)
-  })
-}
-
-// ============================================================================
-// Main Function
-// ============================================================================
-
-fn main() {
-  println!("🚀 TTLog Maximum Performance Testing Suite");
-  println!("=========================================");
-  println!("This suite tests TTLog at its absolute performance limits!");
-  println!();
-
-  // Parse command line arguments for test selection
-  let args: Vec<String> = std::env::args().collect();
-
-  if args.len() > 1 {
-    match args[1].as_str() {
-      "throughput" => {
-        println!("🎯 Running Throughput Tests Only");
-        run_throughput_tests();
-      },
-      "concurrency" => {
-        println!("🎯 Running Concurrency Tests Only");
-        run_concurrency_tests();
-      },
-      "memory" => {
-        println!("🎯 Running Memory Efficiency Tests Only");
-        run_memory_efficiency_tests();
-      },
-      "all" | _ => {
-        println!("🎯 Running All Performance Tests");
-        run_comprehensive_performance_tests();
-      },
-    }
-  } else {
-    println!("🎯 Running All Performance Tests (default)");
-    run_comprehensive_performance_tests();
+  thread_local! {
+    static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None);
   }
 
-  println!("\n🚀 Maximum performance testing completed!");
-  println!("🚀 TTLog has proven its performance capabilities at the limit!");
+  BUILDER.with(|cell| {
+    let mut builder_ref = cell.borrow_mut();
+    if builder_ref.is_none() {
+      *builder_ref = Some(EventBuilder::new(interner.clone()));
+    }
+
+    let builder = builder_ref.as_mut().unwrap();
+    builder.build_fast(counter, LogLevel::INFO, "bench", "test message")
+  })
+}
+
+fn create_variable_size_event(counter: u64) -> LogEvent {
+  static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
+  let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new()));
+
+  thread_local! {
+    static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None);
+  }
+
+  BUILDER.with(|cell| {
+    let mut builder_ref = cell.borrow_mut();
+    if builder_ref.is_none() {
+      *builder_ref = Some(EventBuilder::new(interner.clone()));
+    }
+
+    let builder = builder_ref.as_mut().unwrap();
+    let message = match counter % 3 {
+      0 => "short",
+      1 => "medium length message with more content",
+      _ => "very long message with extensive content that takes up significantly more memory",
+    };
+
+    builder.build_fast(counter, LogLevel::INFO, "bench", message)
+  })
+}
+
+// ============================================================================
+// Comprehensive Benchmark Runner
+// ============================================================================
+
+struct ComprehensiveBenchmark {
+  test_duration: Duration,
+}
+
+impl ComprehensiveBenchmark {
+  fn new(test_duration: Duration) -> Self {
+    Self { test_duration }
+  }
+
+  /// Run all benchmarks and collect results
+  fn run_all_benchmarks(&self) -> (Vec<TestResult>, Vec<BufferTest>, Vec<SummaryMetric>) {
+    let mut all_test_results = Vec::new();
+    let mut all_buffer_results = Vec::new();
+    let mut summary_metrics = Vec::new();
+
+    println!("🚀 Starting Comprehensive TTLog Performance Analysis...");
+    println!("{}", "=".repeat(80));
+
+    // ========================================
+    // Throughput Tests
+    // ========================================
+    println!("\n📊 Running Throughput Tests...");
+    let throughput_tester = ThroughputTester::new(self.test_duration);
+
+    let max_events_result = throughput_tester.max_events_per_second(1_000_000);
+    println!(
+      "✅ Max Events/Sec: {:.0} events/sec",
+      max_events_result.value
+    );
+
+    let max_ops_result = throughput_tester.max_buffer_operations(1_000_000);
+    println!("✅ Max Buffer Ops/Sec: {:.0} ops/sec", max_ops_result.value);
+
+    all_test_results.push(max_events_result.clone());
+    all_test_results.push(max_ops_result.clone());
+
+    summary_metrics.extend_from_slice(&[
+      SummaryMetric {
+        metric: "Maximum Events per Second".to_string(),
+        value: max_events_result.value,
+        unit: max_events_result.unit.clone(),
+      },
+      SummaryMetric {
+        metric: "Maximum Buffer Operations per Second".to_string(),
+        value: max_ops_result.value,
+        unit: max_ops_result.unit.clone(),
+      },
+    ]);
+
+    // Display throughput results table
+    println!("\n📋 Throughput Test Results:");
+    let throughput_table =
+      Table::new(&[max_events_result.clone(), max_ops_result.clone()]).to_string();
+    println!("{}", throughput_table);
+
+    // ========================================
+    // Concurrency Tests
+    // ========================================
+    println!("\n📊 Running Concurrency Tests...");
+    let concurrency_tester = ConcurrencyTester::new(Duration::from_secs(10));
+
+    let max_threads_result = concurrency_tester.max_concurrent_threads(1024);
+    println!(
+      "✅ Max Concurrent Threads: {:.0} threads",
+      max_threads_result.value
+    );
+
+    let max_buffers_result = concurrency_tester.max_concurrent_buffers(100_000);
+    println!(
+      "✅ Max Concurrent Buffers: {:.0} buffers",
+      max_buffers_result.value
+    );
+
+    all_test_results.push(max_threads_result.clone());
+    all_test_results.push(max_buffers_result.clone());
+
+    summary_metrics.extend_from_slice(&[
+      SummaryMetric {
+        metric: "Maximum Concurrent Threads".to_string(),
+        value: max_threads_result.value,
+        unit: max_threads_result.unit.clone(),
+      },
+      SummaryMetric {
+        metric: "Maximum Concurrent Buffers".to_string(),
+        value: max_buffers_result.value,
+        unit: max_buffers_result.unit.clone(),
+      },
+    ]);
+
+    // Display concurrency results table
+    println!("\n📋 Concurrency Test Results:");
+    let concurrency_table =
+      Table::new(&[max_threads_result.clone(), max_buffers_result.clone()]).to_string();
+    println!("{}", concurrency_table);
+
+    // ========================================
+    // Memory Tests
+    // ========================================
+    println!("\n📊 Running Memory Tests...");
+    let memory_tester = MemoryEfficiencyTester::new(self.test_duration);
+
+    let memory_allocation_result = memory_tester.max_memory_allocation_rate();
+    println!(
+      "✅ Memory Allocation Rate: {:.0} allocs/sec",
+      memory_allocation_result.value
+    );
+
+    let bytes_per_event_result = memory_tester.bytes_per_event_efficiency();
+    println!(
+      "✅ Bytes per Event (approx): {:.2} bytes/event",
+      bytes_per_event_result.value
+    );
+
+    let memory_throughput_result = memory_tester.max_memory_throughput();
+    println!(
+      "✅ Memory Throughput: {:.0} bytes/sec",
+      memory_throughput_result.value
+    );
+
+    all_test_results.push(memory_allocation_result.clone());
+    all_test_results.push(bytes_per_event_result.clone());
+    all_test_results.push(memory_throughput_result.clone());
+
+    summary_metrics.extend_from_slice(&[
+      SummaryMetric {
+        metric: "Allocations per Second".to_string(),
+        value: memory_allocation_result.value,
+        unit: memory_allocation_result.unit.clone(),
+      },
+      SummaryMetric {
+        metric: "Bytes per Event (approx)".to_string(),
+        value: bytes_per_event_result.value,
+        unit: bytes_per_event_result.unit.clone(),
+      },
+      SummaryMetric {
+        metric: "Memory Throughput".to_string(),
+        value: memory_throughput_result.value,
+        unit: memory_throughput_result.unit.clone(),
+      },
+    ]);
+
+    // ========================================
+    // Buffer Operations Tests (various P/C ratios)
+    // ========================================
+    println!("\n📊 Running Buffer Operations Tests...");
+    let buffer_tester = BufferOperationsTester::new(self.test_duration);
+    let ratios_results = buffer_tester.test_producer_consumer_ratios(1_000_000);
+    all_buffer_results.extend_from_slice(&ratios_results);
+
+    // Return all collected results
+    (all_test_results, all_buffer_results, summary_metrics)
+  }
+}
+
+// =========================================================================
+// Unification and Printing
+// =========================================================================
+
+fn buffer_tests_to_results(buffer_tests: &[BufferTest]) -> Vec<TestResult> {
+  buffer_tests
+    .iter()
+    .map(|b| TestResult {
+      test_name: format!("Buffer {}", b.test_name),
+      metric: "Ops per Second".to_string(),
+      value: b.ops_per_sec,
+      unit: "ops/sec".to_string(),
+      duration: b.duration.clone(),
+      config: format!(
+        "producers={}, consumers={}, buffer={}",
+        b.producers, b.consumers, b.buffer_size
+      ),
+      notes: format!("total_ops={}, {}", b.total_ops, b.notes),
+    })
+    .collect()
+}
+
+fn print_unified_results_table(results: &[TestResult]) {
+  println!("\n{}", "=".repeat(100));
+  println!("🚀 ALL PERFORMANCE RESULTS (Unified Table)");
+  println!("{}", "=".repeat(100));
+  if results.is_empty() {
+    println!("No results to display");
+    return;
+  }
+  let table = Table::new(results).to_string();
+  println!("{}", table);
+  println!("{}", "=".repeat(100));
+}
+
+// =========================================================================
+// Main
+// =========================================================================
+
+fn main() {
+  println!("🔬 TTLog Maximum Performance Benchmark (Unified Output)");
+  println!("==============================================");
+
+  // Optional: allow duration override via env or args in the future; default to 5s
+  let duration = Duration::from_secs(5);
+  let runner = ComprehensiveBenchmark::new(duration);
+  let (mut test_results, buffer_results, _summary) = runner.run_all_benchmarks();
+
+  // Merge buffer tests into unified TestResult list
+  let mut buffer_as_results = buffer_tests_to_results(&buffer_results);
+  test_results.append(&mut buffer_as_results);
+
+  // Print a single consolidated table of all results
+  print_unified_results_table(&test_results);
+
+  println!("\n✅ Benchmark completed. Results above.");
 }
