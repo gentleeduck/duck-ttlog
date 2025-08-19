@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod __test__ {
 
-  use std::sync::Arc;
   use serde_json;
+  use std::sync::Arc;
 
-  use crate::event::{FieldValue, LogEvent, LogLevel, Field};
+  use crate::event::{Field, FieldValue, LogEvent, LogLevel};
   use crate::event_builder::EventBuilder;
   use crate::string_interner::StringInterner;
 
@@ -20,11 +20,26 @@ mod __test__ {
 
   #[test]
   fn test_log_level_from_tracing_level() {
-    assert_eq!(LogLevel::from_tracing_level(&tracing::Level::TRACE), LogLevel::TRACE);
-    assert_eq!(LogLevel::from_tracing_level(&tracing::Level::DEBUG), LogLevel::DEBUG);
-    assert_eq!(LogLevel::from_tracing_level(&tracing::Level::INFO), LogLevel::INFO);
-    assert_eq!(LogLevel::from_tracing_level(&tracing::Level::WARN), LogLevel::WARN);
-    assert_eq!(LogLevel::from_tracing_level(&tracing::Level::ERROR), LogLevel::ERROR);
+    assert_eq!(
+      LogLevel::from_tracing_level(&tracing::Level::TRACE),
+      LogLevel::TRACE
+    );
+    assert_eq!(
+      LogLevel::from_tracing_level(&tracing::Level::DEBUG),
+      LogLevel::DEBUG
+    );
+    assert_eq!(
+      LogLevel::from_tracing_level(&tracing::Level::INFO),
+      LogLevel::INFO
+    );
+    assert_eq!(
+      LogLevel::from_tracing_level(&tracing::Level::WARN),
+      LogLevel::WARN
+    );
+    assert_eq!(
+      LogLevel::from_tracing_level(&tracing::Level::ERROR),
+      LogLevel::ERROR
+    );
   }
 
   #[test]
@@ -43,10 +58,10 @@ mod __test__ {
     let timestamp = 1234567890;
     let level = LogLevel::ERROR;
     let thread_id = 42;
-    
+
     let packed = LogEvent::pack_meta(timestamp, level, thread_id);
     let (unpacked_timestamp, unpacked_level, unpacked_thread_id) = LogEvent::unpack_meta(packed);
-    
+
     assert_eq!(unpacked_timestamp, timestamp);
     assert_eq!(unpacked_level, level as u8);
     assert_eq!(unpacked_thread_id, thread_id);
@@ -58,9 +73,9 @@ mod __test__ {
     let timestamp = 9876543210;
     let level = LogLevel::WARN;
     let thread_id = 123;
-    
+
     event.packed_meta = LogEvent::pack_meta(timestamp, level, thread_id);
-    
+
     assert_eq!(event.timestamp_millis(), timestamp);
     assert_eq!(event.level(), level);
     assert_eq!(event.thread_id(), thread_id);
@@ -69,21 +84,21 @@ mod __test__ {
   #[test]
   fn test_log_event_add_field() {
     let mut event = LogEvent::new();
-    
+
     // Add first field
     assert!(event.add_field(1, FieldValue::I64(42)));
     assert_eq!(event.field_count, 1);
     assert_eq!(event.fields[0].key_id, 1);
     assert!(matches!(event.fields[0].value, FieldValue::I64(42)));
-    
+
     // Add second field
     assert!(event.add_field(2, FieldValue::Bool(true)));
     assert_eq!(event.field_count, 2);
-    
+
     // Add third field
     assert!(event.add_field(3, FieldValue::F64(3.14)));
     assert_eq!(event.field_count, 3);
-    
+
     // Try to add fourth field (should fail - max 3 fields)
     assert!(!event.add_field(4, FieldValue::U64(999)));
     assert_eq!(event.field_count, 3);
@@ -98,9 +113,9 @@ mod __test__ {
     event.field_count = 2;
     event.file_id = 3;
     event.line = 100;
-    
+
     event.reset();
-    
+
     assert_eq!(event.packed_meta, 0);
     assert_eq!(event.target_id, 0);
     assert_eq!(event.message_id, 0);
@@ -225,18 +240,13 @@ mod __test__ {
   fn test_event_builder_basic() {
     let interner = Arc::new(StringInterner::new());
     let mut builder = EventBuilder::new(interner.clone());
-    
-    let event = builder.build_fast(
-      12345,
-      LogLevel::DEBUG,
-      "test_module",
-      "Hello World"
-    );
+
+    let event = builder.build_fast(12345, LogLevel::DEBUG, "test_module", "Hello World");
 
     assert_eq!(event.timestamp_millis(), 12345);
     assert_eq!(event.level(), LogLevel::DEBUG);
     assert_eq!(event.field_count, 0);
-    
+
     // Verify string interning worked
     let target = interner.get_target(event.target_id).unwrap();
     let message = interner.get_message(event.message_id).unwrap();
@@ -248,36 +258,36 @@ mod __test__ {
   fn test_event_builder_with_fields() {
     let interner = Arc::new(StringInterner::new());
     let mut builder = EventBuilder::new(interner.clone());
-    
+
     let fields = vec![
       ("key1".to_string(), FieldValue::I64(42)),
       ("key2".to_string(), FieldValue::Bool(true)),
       ("key3".to_string(), FieldValue::F64(3.14)),
     ];
-    
+
     let event = builder.build_with_fields(
       67890,
       LogLevel::ERROR,
       "error_module",
       "Error occurred",
-      &fields
+      &fields,
     );
 
     assert_eq!(event.timestamp_millis(), 67890);
     assert_eq!(event.level(), LogLevel::ERROR);
     assert_eq!(event.field_count, 3);
-    
+
     // Check field values
     assert!(matches!(event.fields[0].value, FieldValue::I64(42)));
     assert!(matches!(event.fields[1].value, FieldValue::Bool(true)));
     assert!(matches!(event.fields[2].value, FieldValue::F64(f) if (f - 3.14).abs() < f64::EPSILON));
-    
+
     // Verify string interning
     let target = interner.get_target(event.target_id).unwrap();
     let message = interner.get_message(event.message_id).unwrap();
     assert_eq!(target.as_ref(), "error_module");
     assert_eq!(message.as_ref(), "Error occurred");
-    
+
     // Verify field keys are interned
     let key1 = interner.get_field(event.fields[0].key_id).unwrap();
     let key2 = interner.get_field(event.fields[1].key_id).unwrap();
@@ -299,7 +309,7 @@ mod __test__ {
     let mut event = LogEvent::new();
     event.target_id = 5;
     event.message_id = 10;
-    
+
     let display_str = format!("{}", event);
     assert_eq!(display_str, "Event(target_id=5, message_id=10)");
   }
