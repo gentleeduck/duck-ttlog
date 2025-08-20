@@ -309,7 +309,9 @@ mod tests {
     // capacity 1, fill the channel so it's full
     let (sender, receiver) = bounded::<Message>(1);
     sender
-      .send(Message::SnapshotImmediate("pre".to_string()))
+      .send(Message::SnapshotImmediate {
+        field1: "pre".to_string(),
+      })
       .unwrap();
 
     // readiness channel to ensure receiver drained the prefilled slot
@@ -392,7 +394,7 @@ mod tests {
         println!("Successfully received panic hook message: {:?}", msg);
         // Verify it's the expected snapshot message
         match msg {
-          Message::SnapshotImmediate(_) => {
+          Message::SnapshotImmediate { field1: _ } => {
             // Test passes - we got the expected snapshot message
             println!("Test passed: panic hook successfully sent snapshot message");
           },

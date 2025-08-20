@@ -46,7 +46,7 @@ mod __test__ {
     trace.request_snapshot("manual-test");
     let msg = rx.recv().expect("recv ok");
     match msg {
-      Message::SnapshotImmediate(reason) => assert_eq!(reason, "manual-test"),
+      Message::SnapshotImmediate { field1: reason } => assert_eq!(reason, "manual-test"),
       _ => panic!("expected SnapshotImmediate"),
     }
   }
@@ -59,7 +59,12 @@ mod __test__ {
     let d1 = format!("{}", Message::Event(ev));
     assert!(d1.starts_with("Event: Event("));
 
-    let d2 = format!("{}", Message::SnapshotImmediate("why".to_string()));
+    let d2 = format!(
+      "{}",
+      Message::SnapshotImmediate {
+        field1: "why".to_string()
+      }
+    );
     assert_eq!(d2, "SnapshotImmediate: why");
 
     let d3 = format!("{}", Message::FlushAndExit);

@@ -113,7 +113,7 @@ impl HighPerformanceTrace {
             Message::Event(event) => {
               let _ = ring.push(event);
             },
-            Message::SnapshotImmediate(reason) => {
+            Message::SnapshotImmediate { field1: reason } => {
               if !ring.is_empty() {
                 Self::create_snapshot(&mut ring, &reason);
               }
@@ -132,7 +132,7 @@ impl HighPerformanceTrace {
               Message::Event(event) => {
                 let _ = ring.push(event);
               },
-              Message::SnapshotImmediate(reason) => {
+              Message::SnapshotImmediate { field1: reason } => {
                 if !ring.is_empty() {
                   Self::create_snapshot(&mut ring, &reason);
                 }
@@ -186,9 +186,9 @@ impl HighPerformanceTrace {
 
   /// Request immediate snapshot
   pub fn snapshot(&self, reason: &str) {
-    let _ = self
-      .sender
-      .try_send(Message::SnapshotImmediate(reason.to_string()));
+    let _ = self.sender.try_send(Message::SnapshotImmediate {
+      field1: reason.to_string(),
+    });
   }
 
   /// Get performance statistics

@@ -19,10 +19,6 @@ chrono = { workspace = true }
 lz4 = { workspace = true }
 gethostname = { workspace = true }
 
-# Tracing ecosystem
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-
 # Async and concurrency
 crossbeam-channel = { workspace = true }
 crossbeam-queue = { workspace = true }

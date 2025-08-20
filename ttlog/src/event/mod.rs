@@ -166,53 +166,6 @@ impl LogLevel {
       _ => LogLevel::INFO,
     }
   }
-
-  /// Convert from a [`tracing::Level`] to this enum.
-  ///
-  /// # Tracing Integration
-  ///
-  /// Provides seamless conversion from the `tracing` crate's level system:
-  /// - **Direct mapping**: Each tracing level maps to equivalent LogLevel
-  /// - **No data loss**: All tracing levels are represented
-  /// - **Performance**: Simple match with inline optimization
-  ///
-  /// # Level Correspondence
-  ///
-  /// | Tracing Level | LogLevel | Numeric Value |
-  /// |---------------|----------|---------------|
-  /// | `tracing::Level::TRACE` | `LogLevel::TRACE` | 0 |
-  /// | `tracing::Level::DEBUG` | `LogLevel::DEBUG` | 1 |
-  /// | `tracing::Level::INFO` | `LogLevel::INFO` | 2 |
-  /// | `tracing::Level::WARN` | `LogLevel::WARN` | 3 |
-  /// | `tracing::Level::ERROR` | `LogLevel::ERROR` | 4 |
-  ///
-  /// # Usage in Subscribers
-  ///
-  /// ```text
-  /// use ttlog::event::LogLevel;
-  /// use tracing_subscriber::layer::Context;
-  ///
-  /// fn on_event(&self, event: &tracing::Event, _ctx: Context<S>) {
-  ///     let level = LogLevel::from_tracing_level(event.metadata().level());
-  ///     // Use level in LogEvent construction...
-  /// }
-  /// ```
-  ///
-  /// # Performance
-  ///
-  /// - **Zero allocation**: Pure enum-to-enum conversion
-  /// - **Compile-time optimization**: Match arms are constant
-  /// - **Inlined**: Marked for aggressive optimization
-  #[inline]
-  pub fn from_tracing_level(level: &tracing::Level) -> LogLevel {
-    match *level {
-      tracing::Level::TRACE => LogLevel::TRACE,
-      tracing::Level::DEBUG => LogLevel::DEBUG,
-      tracing::Level::INFO => LogLevel::INFO,
-      tracing::Level::WARN => LogLevel::WARN,
-      tracing::Level::ERROR => LogLevel::ERROR,
-    }
-  }
 }
 
 /// Supported types for structured log field values.

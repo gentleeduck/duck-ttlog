@@ -18,8 +18,3 @@ quote = { workspace = true }
 syn = { workspace = true }
 proc-macro2 = { workspace = true }
 
-# Core dependencies
-serde = { workspace = true }
-serde_cbor = { workspace = true }
-smallvec = { workspace = true }
-

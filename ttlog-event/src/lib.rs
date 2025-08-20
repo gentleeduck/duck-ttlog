@@ -5,7 +5,6 @@ use syn::{
   parse_macro_input, Expr, Ident, LitStr, Token,
 };
 
-#[derive(Debug)]
 struct LogInput {
   kvs: Vec<(Ident, Expr)>,
   message: Option<LitStr>,

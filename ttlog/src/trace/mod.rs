@@ -13,17 +13,10 @@ use crate::string_interner::StringInterner;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{self, AtomicU8, Ordering};
 
-/// Messages sent between the logging layer and the writer thread.
-///
-/// This enum encapsulates all communication between the producer side (logging calls)
-/// and the consumer side (writer thread that manages the ring buffer).
 #[derive(Debug)]
 pub enum Message {
-  /// A log event to be stored in the ring buffer
   Event(LogEvent),
-  /// Request for immediate snapshot with a reason string
   SnapshotImmediate(&'static str),
-  /// Signal for graceful shutdown with final flush
   FlushAndExit,
 }
 
