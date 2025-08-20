@@ -75,12 +75,6 @@ impl EventBuilder {
 
     event
   }
-  // #[inline]
-  // pub fn build_from_tracing(&mut self, tracing_event: LogEvent) -> LogEvent {
-  //   let timestamp_millis = chrono::Utc::now().timestamp_millis() as u64;
-  //
-  //   self.build_fast(timestamp_millis, LogLevel::INFO, "", "")
-  // }
 
   pub fn current_thread_id_u32() -> u32 {
     use std::collections::hash_map::DefaultHasher;

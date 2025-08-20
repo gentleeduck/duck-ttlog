@@ -22,7 +22,7 @@ gethostname = { workspace = true }
 # Async and concurrency
 crossbeam-channel = { workspace = true }
 crossbeam-queue = { workspace = true }
-ttlog-macros = { path = "../ttlog-event" }
+ttlog-macros = { path = "../ttlog-macros" }
 
 [dev-dependencies]
 # Async and concurrency

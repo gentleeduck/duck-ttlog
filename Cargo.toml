@@ -2,7 +2,7 @@
 members = [
   "ttlog",
   "ttlog-view",
-  "ttlog-event",
+  "ttlog-macros",
   "ttlog-benches",
   "examples/ttlog-simple",
   "examples/ttlog-server", 
