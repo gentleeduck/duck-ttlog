@@ -1,5 +1,5 @@
-mod snapshot_read;
-mod utils;
+// mod snapshot_read;
+// mod utils;
 
 // use crate::snapshot_read::SnapshotFile;
 // use crate::utils::{generate_ascii_art, print_snapshots};
@@ -108,22 +108,19 @@ mod utils;
 //   Ok(())
 // }
 
-/// Macro to create a vector of bytes
-// macro_rules! wildduck {
-//   ( $( $x:expr ),* ) => {
-//     {
-//       let mut temp = Vec::<_>::new();
-//       $(
-//           temp.push($x);
-//       )*
-//       temp
-//     }
-//   };
-// }
+use ttlog::trace::{self, GLOBAL_LOGGER};
 use ttlog_event::info;
 
 fn main() {
-  info!(user_id = 42, success = true, "User logged in");
+  let trace = trace::Trace::init(10_000, 10_000, "gentleduck");
+  println!("{:?}", trace.get_level());
 
   info!("Just a simple log line");
+
+  // info!(user_id = 42, success = true, "User logged in");
+
+  // trace!("Just a simple log line");
+  //
+  // warn!("Just a simple log line");
+  // error!("Just a simple log line");
 }

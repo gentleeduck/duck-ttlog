@@ -16,13 +16,13 @@
 //!
 //! ```text
 //! LogEvent (104 bytes total):
-//! ┌─────────────────┬──────────────┬──────────────┬──────────────┐
-//! │ packed_meta(8)  │ target_id(2) │ message_id(2)│ field_count(1)│
-//! ├─────────────────┼──────────────┼──────────────┼──────────────┤
+//! ┌─────────────────┬───────────────┬──────────────┬───────────────┐
+//! │ packed_meta(8)  │ target_id(2)  │ message_id(2)│ field_count(1)│
+//! ├─────────────────┼───────────────┼──────────────┼───────────────┤
 //! │ fields[0] (10)  │ fields[1] (10)│ fields[2] (10)│ file_id(2)   │
-//! ├─────────────────┼──────────────┼──────────────┼──────────────┤
-//! │ line(2)         │ _padding(9)   │              │              │
-//! └─────────────────┴──────────────┴──────────────┴──────────────┘
+//! ├─────────────────┼───────────────┼──────────────┼───────────────┤
+//! │ line(2)         │ _padding(9)   │              │               │
+//! └─────────────────┴───────────────┴──────────────┴───────────────┘
 //! ```
 //!
 //! ## String Interning Strategy
@@ -140,20 +140,29 @@ impl LogLevel {
   ///
   /// ```rust
   /// use ttlog::event::LogLevel;
-  /// assert_eq!(LogLevel::from_str("error"), LogLevel::ERROR);
-  /// assert_eq!(LogLevel::from_str("invalid"), LogLevel::INFO);
-  /// assert_eq!(LogLevel::from_str("INFO"), LogLevel::INFO); // Case matters
+  /// let level = LogLevel::from_str("trace");
+  /// assert_eq!(level, LogLevel::TRACE);
+  /// let level = LogLevel::from_str("debug");
+  /// assert_eq!(level, LogLevel::DEBUG);
+  /// let level = LogLevel::from_str("info");
+  /// assert_eq!(level, LogLevel::INFO);
+  /// let level = LogLevel::from_str("warn");
+  /// assert_eq!(level, LogLevel::WARN);
+  /// let level = LogLevel::from_str("error");
+  /// assert_eq!(level, LogLevel::ERROR);
+  /// let level = LogLevel::from_str("unknown");
+  /// assert_eq!(level, LogLevel::INFO);
   /// ```
   ///
   /// Defaults to [`LogLevel::INFO`] on unknown strings.
   #[inline]
-  pub fn from_str(level: &str) -> LogLevel {
+  pub fn from_u8(level: &u8) -> LogLevel {
     match level {
-      "trace" => LogLevel::TRACE,
-      "debug" => LogLevel::DEBUG,
-      "info" => LogLevel::INFO,
-      "warn" => LogLevel::WARN,
-      "error" => LogLevel::ERROR,
+      0 => LogLevel::TRACE,
+      1 => LogLevel::DEBUG,
+      2 => LogLevel::INFO,
+      3 => LogLevel::WARN,
+      4 => LogLevel::ERROR,
       _ => LogLevel::INFO,
     }
   }
