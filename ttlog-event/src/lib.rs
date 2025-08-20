@@ -2,80 +2,147 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{
   parse::{Parse, ParseStream},
-  Expr, LitStr, Result, Token,
+  parse_macro_input, Expr, Ident, LitStr, Token,
 };
-use ttlog::event::LogLevel;
 
 #[derive(Debug)]
 struct LogInput {
-  message: Expr,
-  fields: Vec<(LitStr, Expr)>,
+  kvs: Vec<(Ident, Expr)>,
+  message: Option<LitStr>,
 }
 
-// Implement parsing for LogInput
 impl Parse for LogInput {
-  fn parse(input: ParseStream) -> Result<Self> {
-    let message: Expr = input.parse()?;
-    let mut fields = Vec::new();
+  fn parse(input: ParseStream) -> syn::Result<Self> {
+    let mut kvs = Vec::new();
+    let mut message = None;
 
-    // Parse optional comma-separated key = value fields
-    while input.peek(Token![,]) {
-      let _comma: Token![,] = input.parse()?;
-      if input.is_empty() {
-        break;
+    while !input.is_empty() {
+      if input.peek(LitStr) {
+        // found "string"
+        if message.is_some() {
+          return Err(input.error("multiple message strings not allowed"));
+        }
+        message = Some(input.parse()?);
+      } else {
+        // parse `key = value`
+        let key: Ident = input.parse()?;
+        input.parse::<Token![=]>()?;
+        let value: Expr = input.parse()?;
+        kvs.push((key, value));
       }
-      let key: LitStr = input.parse()?;
-      let _eq: Token![=] = input.parse()?;
-      let value: Expr = input.parse()?;
-      fields.push((key, value));
+
+      // optional comma
+      if input.peek(Token![,]) {
+        input.parse::<Token![,]>()?;
+      }
     }
 
-    Ok(LogInput { message, fields })
+    Ok(LogInput { kvs, message })
   }
+}
+
+fn generate_log_call(level: &str, parsed: LogInput) -> TokenStream {
+  let level_ident = level.to_string();
+
+  match (parsed.message, parsed.kvs.is_empty()) {
+    (Some(message), true) => {
+      quote! {
+        println!("[{}] {}", #level_ident, #message);
+      }
+    },
+    (Some(message), false) => {
+      let kvs = parsed
+        .kvs
+        .iter()
+        .map(|(k, v)| {
+          let k_lit = syn::LitStr::new(&k.to_string(), proc_macro2::Span::call_site());
+          quote! {
+            format!("{} = {:?}", #k_lit, #v)
+          }
+        })
+        .collect::<Vec<_>>();
+
+      quote! {
+        println!(
+          "[{}] {} {:?}",
+          #level_ident,
+          #message,
+          [#(#kvs),*].join(" ")
+
+        );
+      }
+    },
+
+    (None, true) => {
+      quote! {
+        println!("[{}] {}", #level_ident, "No message");
+      }
+    },
+
+    (None, false) => {
+      let kvs = parsed
+        .kvs
+        .iter()
+        .map(|(k, v)| {
+          let k_lit = syn::LitStr::new(&k.to_string(), proc_macro2::Span::call_site());
+          quote! {
+            format!("{} = {:?}", #k_lit, #v)
+          }
+        })
+        .collect::<Vec<_>>();
+
+      quote! {
+        println!("[{}] {}", #level_ident, [#(#kvs),*].join(" "));
+      }
+    },
+  }
+  .into()
 }
 
 #[proc_macro]
 pub fn info(input: TokenStream) -> TokenStream {
-  let input = syn::parse_macro_input!(input as LogInput);
-  let expanded = generate_log_call(&input, LogLevel::INFO);
-  TokenStream::from(expanded)
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("info", parsed)
 }
 
-// Optimized code generation
-fn generate_log_call(input: &LogInput, level: LogLevel) -> proc_macro2::TokenStream {
-  println!("Generate log call for level: {:?}", input);
-  let message = &input.message;
-  let target = get_module_path();
-
-  let field_names: Vec<_> = input.fields.iter().map(|(k, _)| k).collect();
-  let field_values: Vec<_> = input.fields.iter().map(|(_, v)| v).collect();
-  let field_count = input.fields.len();
-
-  let level_ident = match level {
-    LogLevel::INFO => quote! { Info },
-    _ => quote! {Info},
-  };
-
-  quote! {
-    if ttlog::logger::is_enabled(ttlog::event::LogLevel::#level_ident, #target) {
-          println!("{}: {}", #target, #message);
-
-      // let mut event = ttlog::EventBuilder::with_capacity(#field_count);
-      //
-      // event
-      //   .timestamp(ttlog::now_nanos())
-      //   .level(ttlog::LogLevel::#level_ident)
-      //   .target(#target)
-      //   .message(#message);
-      //
-      // #(event.field(#field_names, #field_values);)*
-      //
-      // ttlog::logger::emit_fast(event.build());
-    }
-  }
+#[proc_macro]
+pub fn warn(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("warn", parsed)
 }
 
-// Helper to get module path
-fn get_module_path() -> &'static str {
-  module_path!()
+#[proc_macro]
+pub fn error(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("error", parsed)
+}
+
+#[proc_macro]
+pub fn debug(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("debug", parsed)
+}
+
+#[proc_macro]
+pub fn trace(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("trace", parsed)
+}
+
+#[proc_macro]
+pub fn span(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("span", parsed)
+}
+
+#[proc_macro]
+pub fn todo(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("todo", parsed)
+}
+
+#[proc_macro]
+pub fn event(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call("event", parsed)
 }

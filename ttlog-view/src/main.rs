@@ -1,5 +1,3 @@
-use ttlog::event::LogEvent;
-
 mod snapshot_read;
 mod utils;
 
@@ -122,20 +120,10 @@ mod utils;
 //     }
 //   };
 // }
+use ttlog_event::info;
 
 fn main() {
-  use ttlog::event::{FieldValue, LogLevel};
-  use ttlog::string_interner::StringInterner;
-  let interner = StringInterner::new();
-  let mut event = LogEvent::new();
-  let timestamp = 0;
-  let thread_id = 0;
+  info!(user_id = 42, success = true, "User logged in");
 
-  // Set basic info
-  event.packed_meta = LogEvent::pack_meta(timestamp, LogLevel::ERROR, thread_id);
-  event.target_id = interner.intern_target("db::connection");
-  event.message_id = interner.intern_message("Failed to connect");
-
-  // Add structured data
-  event.add_field(interner.intern_field("retry_count"), FieldValue::U32(3));
+  info!("Just a simple log line");
 }
