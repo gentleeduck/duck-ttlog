@@ -1278,6 +1278,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "ttlog-macros",
 ]
 
 [[package]]
@@ -1321,19 +1322,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ttlog-event"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde",
- "serde_cbor",
- "smallvec",
- "syn 2.0.106",
- "ttlog",
-]
-
-[[package]]
 name = "ttlog-filereader"
 version = "0.1.0"
 dependencies = [
@@ -1342,6 +1330,18 @@ dependencies = [
  "serde_cbor",
  "tracing",
  "ttlog",
+]
+
+[[package]]
+name = "ttlog-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_cbor",
+ "smallvec",
+ "syn 2.0.106",
 ]
 
 [[package]]
@@ -1377,7 +1377,6 @@ dependencies = [
  "terminal_size",
  "tracing",
  "ttlog",
- "ttlog-event",
 ]
 
 [[package]]

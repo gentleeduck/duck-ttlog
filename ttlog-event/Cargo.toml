@@ -1,5 +1,5 @@
 [package]
-name = "ttlog-event"
+name = "ttlog-macros"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -23,5 +23,3 @@ serde = { workspace = true }
 serde_cbor = { workspace = true }
 smallvec = { workspace = true }
 
-# Internal dependencies
-ttlog = { path = "../ttlog" }

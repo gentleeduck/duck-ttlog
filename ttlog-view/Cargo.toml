@@ -29,7 +29,6 @@ tracing = { workspace = true }
 
 # Internal dependencies
 ttlog = { path = "../ttlog" }
-ttlog-event = { path = "../ttlog-event" }
 
 # Development and testing
 criterion = { workspace = true }

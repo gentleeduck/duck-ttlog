@@ -108,8 +108,10 @@
 //   Ok(())
 // }
 
-use ttlog::trace::{self, GLOBAL_LOGGER};
-use ttlog_event::info;
+use ttlog::{
+  trace::{self},
+  ttlog_macros::info,
+};
 
 fn main() {
   let trace = trace::Trace::init(10_000, 10_000, "gentleduck");
@@ -118,9 +120,4 @@ fn main() {
   info!("Just a simple log line");
 
   info!(user_id = 42, success = true, "User logged in");
-
-  // trace!("Just a simple log line");
-  //
-  // warn!("Just a simple log line");
-  // error!("Just a simple log line");
 }

@@ -26,6 +26,7 @@ tracing-subscriber = { workspace = true }
 # Async and concurrency
 crossbeam-channel = { workspace = true }
 crossbeam-queue = { workspace = true }
+ttlog-macros = { path = "../ttlog-event" }
 
 [dev-dependencies]
 # Async and concurrency

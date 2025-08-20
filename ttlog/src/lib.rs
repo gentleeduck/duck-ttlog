@@ -5,4 +5,5 @@ pub mod panic_hook;
 pub mod snapshot;
 pub mod string_interner;
 pub mod trace;
-// pub mod trace_layer;
+
+pub extern crate ttlog_macros;
