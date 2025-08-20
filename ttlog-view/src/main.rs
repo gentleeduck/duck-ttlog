@@ -117,7 +117,7 @@ fn main() {
 
   info!("Just a simple log line");
 
-  // info!(user_id = 42, success = true, "User logged in");
+  info!(user_id = 42, success = true, "User logged in");
 
   // trace!("Just a simple log line");
   //

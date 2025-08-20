@@ -16,7 +16,7 @@ pub struct EventBuilder {
 
 impl EventBuilder {
   pub fn new(interner: Arc<StringInterner>) -> Self {
-    let thread_id = EventBuilder::current_thread_id_u64() as u8;
+    let thread_id = EventBuilder::current_thread_id_u32() as u8;
 
     Self {
       interner,
@@ -88,7 +88,7 @@ impl EventBuilder {
     self.build_fast(timestamp_millis, LogLevel::INFO, "", "")
   }
 
-  fn current_thread_id_u64() -> u32 {
+  pub fn current_thread_id_u32() -> u32 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
@@ -144,7 +144,7 @@ pub fn build_event_stack(
   target: &str,
   message: &str,
 ) -> LogEvent {
-  let thread_id = EventBuilder::current_thread_id_u64() as u8;
+  let thread_id = EventBuilder::current_thread_id_u32() as u8;
 
   LogEvent {
     packed_meta: LogEvent::pack_meta(timestamp_millis, level, thread_id),

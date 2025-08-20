@@ -1,19 +1,15 @@
 mod __test__;
 
 use chrono::Duration;
-use std::cell::UnsafeCell;
 use std::sync::OnceLock;
 use std::time::Instant;
 use std::{sync::Arc, thread};
-use tracing_subscriber::layer::SubscriberExt;
 
 use crate::event::{LogEvent, LogLevel};
-use crate::event_builder::EventBuilder;
 use crate::lf_buffer::LockFreeRingBuffer;
 use crate::panic_hook::PanicHook;
 use crate::snapshot::SnapshotWriter;
 use crate::string_interner::StringInterner;
-// use crate::trace_layer::BufferLayer;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{self, AtomicU8, Ordering};
 
@@ -26,7 +22,7 @@ pub enum Message {
   /// A log event to be stored in the ring buffer
   Event(LogEvent),
   /// Request for immediate snapshot with a reason string
-  SnapshotImmediate(String),
+  SnapshotImmediate(&'static str),
   /// Signal for graceful shutdown with final flush
   FlushAndExit,
 }
@@ -43,6 +39,8 @@ impl std::fmt::Display for Message {
 
 #[derive(Debug)]
 pub struct Trace {
+  /// Direct reference to ring buffer for zero-copy fast path
+  pub ring_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
   /// Channel sender for communicating with the writer thread
   pub sender: Sender<Message>,
   /// Atomic log level for runtime filtering
@@ -54,14 +52,15 @@ thread_local! {
   pub static GLOBAL_LOGGER: OnceLock<Trace> = OnceLock::new();
 }
 
-thread_local! {
-  pub static LAYER_BUILDER: UnsafeCell<Option<EventBuilder>> = UnsafeCell::new(None);
-}
-
 impl Trace {
-  pub fn new(sender: Sender<Message>, interner: Arc<StringInterner>) -> Self {
+  pub fn new(
+    sender: Sender<Message>,
+    interner: Arc<StringInterner>,
+    ring_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+  ) -> Self {
     Self {
       sender,
+      ring_buffer,
       interner,
       level: AtomicU8::new(LogLevel::INFO as u8),
     }
@@ -70,6 +69,7 @@ impl Trace {
   pub fn init(capacity: usize, channel_capacity: usize, service_name: &str) -> Self {
     let (sender, receiver) = crossbeam_channel::bounded::<Message>(channel_capacity);
     let interner = Arc::new(StringInterner::new());
+    let ring_buffer = Arc::new(LockFreeRingBuffer::new(capacity));
 
     // Install panic hook before spawning writer thread
     PanicHook::install(sender.clone());
@@ -79,14 +79,13 @@ impl Trace {
     let service_name = service_name.to_string();
     thread::spawn(move || Self::writer_loop(receiver, capacity, writer_interner, service_name));
 
-    GLOBAL_LOGGER.with(|logger_cell| {
-      match logger_cell.set(Trace::new(sender.clone(), interner.clone())) {
-        Ok(_) => {},
-        Err(_) => panic!("GLOBAL_LOGGER already initialized"),
-      }
+    let trace = Trace::new(sender, interner, ring_buffer);
+    GLOBAL_LOGGER.with(|logger_cell| match logger_cell.set(trace.clone()) {
+      Ok(_) => {},
+      Err(_) => panic!("GLOBAL_LOGGER already initialized"),
     });
 
-    Self::new(sender, interner)
+    trace
   }
 
   pub fn shutdown(&self) {
@@ -99,10 +98,9 @@ impl Trace {
     self.sender.clone()
   }
 
-  pub fn request_snapshot(&self, reason: &str) {
-    let _ = self
-      .sender
-      .try_send(Message::SnapshotImmediate(reason.to_string()));
+  pub fn request_snapshot(&self, reason: &'static str) {
+    // Remove string allocation
+    let _ = self.sender.try_send(Message::SnapshotImmediate(reason));
   }
 
   pub fn set_level(&self, level: LogLevel) {
@@ -114,24 +112,37 @@ impl Trace {
     unsafe { std::mem::transmute(level_u8) }
   }
 
-  pub fn send_event(
-    &self,
-    log_level: u8,
-    message: &str,
-    module_path: &str,
-    file: &str,
-    position: (u32, u32),
-  ) {
-    println!(
-      "[{:?}] {:?} - {} - {}, {}:{}",
-      LogLevel::from_u8(&log_level),
-      message,
-      module_path,
-      file,
-      position.0,
-      position.1
-    );
-    // let _ = self.sender.try_send(Message::Event(event));
+  #[inline(always)]
+  pub fn send_event_fast(&self, log_level: u8, target_id: u16, message_id: u16, thread_id: u8) {
+    // Fast level check first
+    if log_level < self.level.load(Ordering::Relaxed) {
+      return;
+    }
+
+    // Create event directly on stack - no heap allocation
+    let timestamp = unsafe {
+      // SAFETY: This is faster than chrono for hot path
+      // Use rdtsc or similar for even faster timing if needed
+      std::arch::x86_64::_rdtsc()
+    };
+
+    let event = LogEvent {
+      packed_meta: LogEvent::pack_meta(
+        timestamp,
+        unsafe { std::mem::transmute(log_level) },
+        thread_id,
+      ),
+      target_id,
+      message_id,
+      field_count: 0,
+      fields: [crate::event::Field::empty(); 3],
+      file_id: 0,
+      line: 0,
+      _padding: [0; 9],
+    };
+
+    // Direct ring buffer push - bypass channel for hot path
+    self.ring_buffer.push_overwrite(event);
   }
 
   fn writer_loop(
@@ -184,5 +195,16 @@ impl Trace {
     }
 
     eprintln!("[Trace] Writer thread terminated");
+  }
+}
+
+impl Clone for Trace {
+  fn clone(&self) -> Self {
+    Self {
+      ring_buffer: Arc::clone(&self.ring_buffer),
+      sender: self.sender.clone(),
+      level: AtomicU8::new(self.level.load(Ordering::Relaxed)),
+      interner: Arc::clone(&self.interner),
+    }
   }
 }

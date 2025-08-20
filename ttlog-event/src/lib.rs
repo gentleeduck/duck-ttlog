@@ -4,7 +4,6 @@ use syn::{
   parse::{Parse, ParseStream},
   parse_macro_input, Expr, Ident, LitStr, Token,
 };
-use ttlog::trace::GLOBAL_LOGGER;
 
 #[derive(Debug)]
 struct LogInput {
@@ -19,20 +18,17 @@ impl Parse for LogInput {
 
     while !input.is_empty() {
       if input.peek(LitStr) {
-        // found "string"
         if message.is_some() {
           return Err(input.error("multiple message strings not allowed"));
         }
         message = Some(input.parse()?);
       } else {
-        // parse `key = value`
         let key: Ident = input.parse()?;
         input.parse::<Token![=]>()?;
         let value: Expr = input.parse()?;
         kvs.push((key, value));
       }
 
-      // optional comma
       if input.peek(Token![,]) {
         input.parse::<Token![,]>()?;
       }
@@ -42,72 +38,145 @@ impl Parse for LogInput {
   }
 }
 
-fn generate_log_call(level: ttlog::event::LogLevel, parsed: LogInput) -> TokenStream {
-  let level_ident = level as u8;
-  // want to get the stack trace for the warnings for example or errors
-  // let stack_strace = std::backtrace::Backtrace::
+fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
+  // Get thread ID at compile time where possible
+  let thread_id_expr = quote! {
+    {
+      static CACHED_THREAD_ID: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
+      *CACHED_THREAD_ID.get_or_init(|| {
+        ttlog::event_builder::EventBuilder::current_thread_id_u32() as u8
+      })
+    }
+  };
 
   match (parsed.message, parsed.kvs.is_empty()) {
+    // Case 1: Simple message, no key-values - FASTEST PATH
     (Some(message), true) => {
       quote! {
-        ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-          if let Some(logger) = logger_cell.get() {
-            let current_level = logger.get_level();
-            if #level_ident >= current_level as u8 {
-              logger.send_event(#level_ident, #message, module_path!(), file!(), (line!(), column!()));
+        {
+          const LEVEL: u8 = #level;
+          const MESSAGE: &'static str = #message;
+          const MODULE: &'static str = module_path!();
+
+          // Static caching - these are computed only once per call site
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              // Ultra-fast level check
+              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(||
+                  logger.interner.intern_target(MODULE));
+                let message_id = *MESSAGE_ID.get_or_init(||
+                  logger.interner.intern_message(MESSAGE));
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
+              }
             }
-          } else {
-            eprintln!("[{}] Logger not initialized: {}", #level_ident, #message);
-          }
-        });
+          });
+        }
       }
     },
+
+    // Case 2: Message with key-values - OPTIMIZED PATH
     (Some(message), false) => {
-      let kvs = parsed
+      // Pre-build format string at compile time
+      let format_parts: Vec<String> = parsed
         .kvs
         .iter()
-        .map(|(k, v)| {
-          let k_lit = syn::LitStr::new(&k.to_string(), proc_macro2::Span::call_site());
-          quote! {
-            format!("{} = {:?}", #k_lit, #v)
-          }
-        })
-        .collect::<Vec<_>>();
+        .map(|(k, _)| format!("{}={{:?}}", k))
+        .collect();
+      let format_str = if format_parts.is_empty() {
+        message.value().to_string()
+      } else {
+        format!("{} {}", message.value(), format_parts.join(" "))
+      };
+
+      let kv_values = parsed.kvs.iter().map(|(_, v)| v);
 
       quote! {
-        ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-          if let Some(logger) = logger_cell.get() {
-            let current_level = logger.get_level();
-            if #level_ident >= current_level as u8 {
-              logger.send_event(#level_ident, &format!("{} {}", #message, [#(#kvs),*].join(" ")), module_path!());
+        {
+          const LEVEL: u8 = #level;
+          const MODULE: &'static str = module_path!();
+
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(||
+                  logger.interner.intern_target(MODULE));
+
+                // Format only when needed, intern immediately
+                let formatted = format!(#format_str, #(#kv_values),*);
+                let message_id = logger.interner.intern_message(&formatted);
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
+              }
             }
-          } else {
-               eprintln!("[{}] Logger not initialized: {}", #level_ident, format!("{} {}", #message, [#(#kvs),*].join(" ")));
-          }
-        });
+          });
+        }
       }
     },
 
+    // Case 3: No message, only key-values - COMPACT PATH
+    (None, false) => {
+      let format_parts: Vec<String> = parsed
+        .kvs
+        .iter()
+        .map(|(k, _)| format!("{}={{:?}}", k))
+        .collect();
+      let format_str = format_parts.join(" ");
+      let kv_values = parsed.kvs.iter().map(|(_, v)| v);
+
+      quote! {
+        {
+          const LEVEL: u8 = #level;
+          const MODULE: &'static str = module_path!();
+
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(||
+                  logger.interner.intern_target(MODULE));
+
+                let formatted = format!(#format_str, #(#kv_values),*);
+                let message_id = logger.interner.intern_message(&formatted);
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
+              }
+            }
+          });
+        }
+      }
+    },
+
+    // Case 4: Empty call - MINIMAL PATH
     (None, true) => {
       quote! {
-        println!("[{}] {}", #level_ident, "No message");
-      }
-    },
+        {
+          const LEVEL: u8 = #level;
+          const MODULE: &'static str = module_path!();
 
-    (None, false) => {
-      let kvs = parsed
-        .kvs
-        .iter()
-        .map(|(k, v)| {
-          let k_lit = syn::LitStr::new(&k.to_string(), proc_macro2::Span::call_site());
-          quote! {
-            format!("{} = {:?}", #k_lit, #v)
-          }
-        })
-        .collect::<Vec<_>>();
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
-      quote! {
-        println!("[{}] {}", #level_ident, [#(#kvs),*].join(" "));
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(||
+                  logger.interner.intern_target(MODULE));
+                let message_id = *MESSAGE_ID.get_or_init(||
+                  logger.interner.intern_message(""));
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
+              }
+            }
+          });
+        }
       }
     },
   }
@@ -117,47 +186,29 @@ fn generate_log_call(level: ttlog::event::LogLevel, parsed: LogInput) -> TokenSt
 #[proc_macro]
 pub fn info(input: TokenStream) -> TokenStream {
   let parsed = parse_macro_input!(input as LogInput);
-  generate_log_call(ttlog::event::LogLevel::INFO, parsed)
+  generate_log_call(2, parsed) // INFO = 2
 }
 
-// #[proc_macro]
-// pub fn warn(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("WARN", parsed)
-// }
-//
-// #[proc_macro]
-// pub fn error(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("ERROR", parsed)
-// }
-//
-// #[proc_macro]
-// pub fn debug(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("DEBUG", parsed)
-// }
-//
-// #[proc_macro]
-// pub fn trace(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("TRACE", parsed)
-// }
-//
-// #[proc_macro]
-// pub fn span(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("SPAN", parsed)
-// }
-//
-// #[proc_macro]
-// pub fn todo(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("TODO", parsed)
-// }
-//
-// #[proc_macro]
-// pub fn event(input: TokenStream) -> TokenStream {
-//   let parsed = parse_macro_input!(input as LogInput);
-//   generate_log_call("EVENT", parsed)
-// }
+#[proc_macro]
+pub fn warn(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call(3, parsed) // WARN = 3
+}
+
+#[proc_macro]
+pub fn error(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call(4, parsed) // ERROR = 4
+}
+
+#[proc_macro]
+pub fn debug(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call(1, parsed) // DEBUG = 1
+}
+
+#[proc_macro]
+pub fn trace(input: TokenStream) -> TokenStream {
+  let parsed = parse_macro_input!(input as LogInput);
+  generate_log_call(0, parsed) // TRACE = 0
+}

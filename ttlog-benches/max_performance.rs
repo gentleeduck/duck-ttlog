@@ -112,7 +112,7 @@ impl ThroughputTester {
   /// Test maximum events per second
   fn max_events_per_second(&self, buffer_size: usize) -> TestResult {
     let start = Instant::now();
-    let _trace_system = Trace::init(buffer_size, buffer_size / 10);
+    let _trace_system = Trace::init(buffer_size, buffer_size / 10, "test");
     let event_count = Arc::new(AtomicU64::new(0));
     let stop_flag = Arc::new(AtomicBool::new(false));
     let thread_count = 16; // Optimal thread count for maximum throughput
@@ -452,17 +452,17 @@ impl MemoryEfficiencyTester {
         .collect();
 
       total_events += events.len();
-      
+
       // Calculate more accurate memory usage per event
       for event in &events {
         let mut event_memory = std::mem::size_of::<LogEvent>();
-        
+
         // Add estimated field data size based on field count
         event_memory += event.field_count as usize * 16; // Rough estimate per field
-        
+
         // Add message overhead (strings are interned, so minimal per-event cost)
         event_memory += 32; // Estimated overhead for interned strings and metadata
-        
+
         total_calculated_memory += event_memory;
       }
 
