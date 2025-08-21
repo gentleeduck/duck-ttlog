@@ -271,6 +271,10 @@ impl StringInterner {
     id
   }
 
+  pub fn get_file(&self, id: u16) -> Option<Arc<str>> {
+    self.files.read().unwrap().get(id as usize).cloned()
+  }
+
   pub fn get_target(&self, id: u16) -> Option<Arc<str>> {
     self.targets.read().unwrap().get(id as usize).cloned()
   }

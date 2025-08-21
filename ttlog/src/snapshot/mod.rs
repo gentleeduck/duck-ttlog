@@ -23,10 +23,13 @@ pub struct Snapshot {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ResolvedEvent {
-  message: String,
-  target: String,
-  kv: Option<String>,
+pub struct ResolvedEvent {
+  pub packed_meta: u64,
+  pub message: String,
+  pub target: String,
+  pub kv: Option<String>,
+  pub file: String,
+  pub position: (u32, u32),
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +78,18 @@ impl SnapshotWriter {
           .and_then(|id| interner.get_kv(id))
           .map(|s| s.to_string());
 
+        let file = match interner.get_file(event.file_id) {
+          Some(f) => f.to_string(),
+          None => {
+            eprintln!("[Trace] Unknown file id: {}", event.file_id);
+            return None;
+          },
+        };
+
         Some(ResolvedEvent {
+          packed_meta: event.packed_meta,
+          position: event.position,
+          file,
           message,
           target,
           kv,

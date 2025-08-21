@@ -724,7 +724,8 @@ fn create_minimal_event(counter: u64) -> LogEvent {
 
   // Intern common strings
   let target_id = interner.intern_target("bench");
-  let message_id = interner.intern_message("test message");
+  let message_id = Some(interner.intern_message("test message"));
+  let kv_id = Some(interner.intern_kv("test kv"));
   let file_id = interner.intern_file(file!());
 
   // Pack metadata: timestamp (ms), level, thread_id (0 for benchmark)
@@ -737,6 +738,7 @@ fn create_minimal_event(counter: u64) -> LogEvent {
   let mut ev = LogEvent {
     packed_meta: packed,
     target_id,
+    kv_id,
     message_id,
     file_id,
     position: (0, 0),
@@ -760,8 +762,9 @@ fn create_variable_size_event(counter: u64) -> LogEvent {
   };
 
   let target_id = interner.intern_target("bench");
-  let message_id = interner.intern_message(message);
+  let message_id = Some(interner.intern_message(message));
   let file_id = interner.intern_file(file!());
+  let kv_id = Some(interner.intern_kv("key"));
 
   let ts_ms = std::time::SystemTime::now()
     .duration_since(std::time::UNIX_EPOCH)
@@ -770,6 +773,7 @@ fn create_variable_size_event(counter: u64) -> LogEvent {
   let packed = LogEvent::pack_meta(ts_ms, LogLevel::INFO, 0);
 
   let mut ev = LogEvent {
+    kv_id,
     packed_meta: packed,
     target_id,
     message_id,
