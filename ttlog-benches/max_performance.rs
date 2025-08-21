@@ -6,7 +6,6 @@ use std::time::{Duration, Instant};
 use tabled::{Table, Tabled};
 use ttlog::{
   event::{LogEvent, LogLevel},
-  event_builder::EventBuilder,
   lf_buffer::LockFreeRingBuffer,
   string_interner::StringInterner,
   trace::Trace,
@@ -723,44 +722,65 @@ fn create_minimal_event(counter: u64) -> LogEvent {
   static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
   let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new()));
 
-  thread_local! {
-    static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None);
-  }
+  // Intern common strings
+  let target_id = interner.intern_target("bench");
+  let message_id = interner.intern_message("test message");
+  let file_id = interner.intern_file(file!());
 
-  BUILDER.with(|cell| {
-    let mut builder_ref = cell.borrow_mut();
-    if builder_ref.is_none() {
-      *builder_ref = Some(EventBuilder::new(interner.clone()));
-    }
+  // Pack metadata: timestamp (ms), level, thread_id (0 for benchmark)
+  let ts_ms = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or_else(|_| std::time::Duration::from_millis(0))
+    .as_millis() as u64;
+  let packed = LogEvent::pack_meta(ts_ms, LogLevel::INFO, 0);
 
-    let builder = builder_ref.as_mut().unwrap();
-    builder.build_fast(counter, LogLevel::INFO, "bench", "test message")
-  })
+  let mut ev = LogEvent {
+    packed_meta: packed,
+    target_id,
+    message_id,
+    file_id,
+    position: (0, 0),
+    _padding: [0; 9],
+  };
+
+  // Optionally use counter to vary position for uniqueness
+  let line = (counter & 0xFFFF) as u32;
+  ev.position = (line, 0);
+  ev
 }
 
 fn create_variable_size_event(counter: u64) -> LogEvent {
   static INTERNER: std::sync::OnceLock<Arc<StringInterner>> = std::sync::OnceLock::new();
   let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new()));
 
-  thread_local! {
-    static BUILDER: std::cell::RefCell<Option<EventBuilder>> = std::cell::RefCell::new(None);
-  }
+  let message = match counter % 3 {
+    0 => "short",
+    1 => "medium length message with more content",
+    _ => "very long message with extensive content that takes up significantly more memory",
+  };
 
-  BUILDER.with(|cell| {
-    let mut builder_ref = cell.borrow_mut();
-    if builder_ref.is_none() {
-      *builder_ref = Some(EventBuilder::new(interner.clone()));
-    }
+  let target_id = interner.intern_target("bench");
+  let message_id = interner.intern_message(message);
+  let file_id = interner.intern_file(file!());
 
-    let builder = builder_ref.as_mut().unwrap();
-    let message = match counter % 3 {
-      0 => "short",
-      1 => "medium length message with more content",
-      _ => "very long message with extensive content that takes up significantly more memory",
-    };
+  let ts_ms = std::time::SystemTime::now()
+    .duration_since(std::time::UNIX_EPOCH)
+    .unwrap_or_else(|_| std::time::Duration::from_millis(0))
+    .as_millis() as u64;
+  let packed = LogEvent::pack_meta(ts_ms, LogLevel::INFO, 0);
 
-    builder.build_fast(counter, LogLevel::INFO, "bench", message)
-  })
+  let mut ev = LogEvent {
+    packed_meta: packed,
+    target_id,
+    message_id,
+    file_id,
+    position: (0, 0),
+    _padding: [0; 9],
+  };
+
+  let line = (counter & 0xFFFF) as u32;
+  ev.position = (line, 0);
+  ev
 }
 
 // ============================================================================

@@ -25,6 +25,16 @@ impl LogLevel {
       _ => LogLevel::INFO,
     }
   }
+
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::TRACE => "TRACE",
+      Self::DEBUG => "DEBUG",
+      Self::INFO => "INFO",
+      Self::WARN => "WARN",
+      Self::ERROR => "ERROR",
+    }
+  }
 }
 
 #[repr(u8)]
@@ -137,67 +147,6 @@ impl fmt::Display for LogEvent {
       "Event(target_id={}, message_id={})",
       self.target_id, self.message_id
     )
-  }
-}
-
-#[derive(Debug, Default)]
-pub struct EventMetrics {
-  pub events_created: std::sync::atomic::AtomicU64,
-  pub total_build_time_ns: std::sync::atomic::AtomicU64,
-  pub cache_hits: std::sync::atomic::AtomicU64,
-  pub cache_misses: std::sync::atomic::AtomicU64,
-}
-
-impl EventMetrics {
-  pub fn record_build_time(&self, start: std::time::Instant) {
-    let elapsed_ns = start.elapsed().as_nanos() as u64;
-    self
-      .total_build_time_ns
-      .fetch_add(elapsed_ns, std::sync::atomic::Ordering::Relaxed);
-    self
-      .events_created
-      .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-  }
-
-  pub fn avg_build_time_ns(&self) -> u64 {
-    let total = self
-      .total_build_time_ns
-      .load(std::sync::atomic::Ordering::Relaxed);
-    let count = self
-      .events_created
-      .load(std::sync::atomic::Ordering::Relaxed);
-
-    if count > 0 {
-      total / count
-    } else {
-      0
-    }
-  }
-
-  #[inline]
-  pub fn record_cache_hit(&self) {
-    self
-      .cache_hits
-      .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-  }
-
-  #[inline]
-  pub fn record_cache_miss(&self) {
-    self
-      .cache_misses
-      .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-  }
-
-  pub fn cache_hit_rate(&self) -> f64 {
-    let hits = self.cache_hits.load(std::sync::atomic::Ordering::Relaxed);
-    let misses = self.cache_misses.load(std::sync::atomic::Ordering::Relaxed);
-    let total = hits + misses;
-
-    if total > 0 {
-      (hits as f64 / total as f64) * 100.0
-    } else {
-      0.0
-    }
   }
 }
 

@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct LockFreeRingBuffer<T> {
-  queue: ArrayQueue<T>,
-  capacity: usize,
+  pub queue: ArrayQueue<T>,
+  pub capacity: usize,
 }
 
 impl<T> LockFreeRingBuffer<T> {

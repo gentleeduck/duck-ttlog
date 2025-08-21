@@ -43,7 +43,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
     {
       static CACHED_THREAD_ID: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
       *CACHED_THREAD_ID.get_or_init(|| {
-        ttlog::event_builder::EventBuilder::current_thread_id_u32() as u8
+        ttlog::utils::current_thread_id_u32() as u8
       })
     }
   };
@@ -80,7 +80,6 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
       }
     },
 
-    // _ => unimplemented!(),
     // Case 2: Message with key-values - OPTIMIZED PATH
     (Some(message), false) => {
       // Pre-build format string at compile time
