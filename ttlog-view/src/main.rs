@@ -109,15 +109,15 @@
 // }
 
 use ttlog::{
+  event::LogLevel,
   trace::{self},
-  ttlog_macros::{info, trace},
+  ttlog_macros::{error, info, trace},
 };
 
 fn main() {
   let trace = trace::Trace::init(10_000, 10_000, "gentleduck");
+  trace.set_level(LogLevel::ERROR);
   println!("{:?}", trace.get_level());
 
   info!("Just a simple log line");
-
-  // trace!(user_id = 42, success = true, "User logged in");
 }

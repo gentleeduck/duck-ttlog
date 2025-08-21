@@ -58,24 +58,6 @@ impl EventBuilder {
     event
   }
 
-  pub fn build_with_fields(
-    &mut self,
-    timestamp_millis: u64,
-    level: LogLevel,
-    target: &str,
-    message: &str,
-    fields: &[(String, FieldValue)],
-  ) -> LogEvent {
-    let mut event = self.build_fast(timestamp_millis, level, target, message);
-
-    for (key, value) in fields.iter().take(3) {
-      let key_id = self.interner.intern_field(key);
-      event.add_field(key_id, *value);
-    }
-
-    event
-  }
-
   pub fn current_thread_id_u32() -> u32 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

@@ -66,8 +66,6 @@ pub struct LogEvent {
   pub packed_meta: u64,
   pub target_id: u16,
   pub message_id: u16,
-  pub field_count: u8,
-  pub fields: [Field; 3],
   pub file_id: u16,
   pub position: (u32, u32),
   pub _padding: [u8; 9],
@@ -106,22 +104,9 @@ impl LogEvent {
       packed_meta: 0,
       target_id: 0,
       message_id: 0,
-      field_count: 0,
-      fields: [Field::empty(); 3],
       file_id: 0,
       position: (0, 0),
       _padding: [0; 9],
-    }
-  }
-
-  #[inline]
-  pub fn add_field(&mut self, key_id: u16, value: FieldValue) -> bool {
-    if self.field_count < 3 {
-      self.fields[self.field_count as usize] = Field { key_id, value };
-      self.field_count += 1;
-      true
-    } else {
-      false
     }
   }
 
@@ -130,7 +115,6 @@ impl LogEvent {
     self.packed_meta = 0;
     self.target_id = 0;
     self.message_id = 0;
-    self.field_count = 0;
     self.file_id = 0;
     self.position = (0, 0);
     // Note: fields array is not cleared for performance -
@@ -218,6 +202,6 @@ impl EventMetrics {
 }
 
 const _: () = {
-  assert!(std::mem::size_of::<LogEvent>() == 104);
+  assert!(std::mem::size_of::<LogEvent>() == 32);
   assert!(std::mem::align_of::<LogEvent>() >= 8);
 };

@@ -1,7 +1,6 @@
 mod __test__;
 
 use chrono::Duration;
-use std::path;
 use std::sync::OnceLock;
 use std::time::Instant;
 use std::{sync::Arc, thread};
@@ -56,7 +55,7 @@ impl Trace {
       sender,
       ring_buffer,
       interner,
-      level: AtomicU8::new(LogLevel::INFO as u8),
+      level: AtomicU8::new(LogLevel::ERROR as u8),
     }
   }
 
@@ -115,10 +114,9 @@ impl Trace {
     thread_id: u8,
     file_id: u16,
     position: (u32, u32),
-    // TODO: allow the fields to be passed in
   ) {
     // Fast level check first
-    if log_level < self.level.load(Ordering::Relaxed) {
+    if log_level > self.level.load(Ordering::Relaxed) {
       return;
     }
 
@@ -139,8 +137,6 @@ impl Trace {
       target_id,
       message_id,
       position,
-      field_count: 0,
-      fields: [crate::event::Field::empty(); 3],
       file_id,
       _padding: [0; 9],
     };

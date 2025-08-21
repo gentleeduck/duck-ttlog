@@ -67,7 +67,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {
               // Ultra-fast level check
-              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+              if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
                 let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
@@ -80,107 +80,117 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
       }
     },
 
-    _ => unimplemented!(),
-    // // Case 2: Message with key-values - OPTIMIZED PATH
-    // (Some(message), false) => {
-    //   // Pre-build format string at compile time
-    //   let format_parts: Vec<String> = parsed
-    //     .kvs
-    //     .iter()
-    //     .map(|(k, _)| format!("{}={{:?}}", k))
-    //     .collect();
-    //   let format_str = if format_parts.is_empty() {
-    //     message.value().to_string()
-    //   } else {
-    //     format!("{} {}", message.value(), format_parts.join(" "))
-    //   };
-    //
-    //   let kv_values = parsed.kvs.iter().map(|(_, v)| v);
-    //
-    //   quote! {
-    //     {
-    //       const LEVEL: u8 = #level;
-    //       const MODULE: &'static str = module_path!();
-    //
-    //       static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-    //
-    //       ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-    //         if let Some(logger) = logger_cell.get() {
-    //           if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-    //             let target_id = *TARGET_ID.get_or_init(||
-    //               logger.interner.intern_target(MODULE));
-    //
-    //             // Format only when needed, intern immediately
-    //             let formatted = format!(#format_str, #(#kv_values),*);
-    //             let message_id = logger.interner.intern_message(&formatted);
-    //
-    //             logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
-    //           }
-    //         }
-    //       });
-    //     }
-    //   }
-    // },
-    //
-    // // Case 3: No message, only key-values - COMPACT PATH
-    // (None, false) => {
-    //   let format_parts: Vec<String> = parsed
-    //     .kvs
-    //     .iter()
-    //     .map(|(k, _)| format!("{}={{:?}}", k))
-    //     .collect();
-    //   let format_str = format_parts.join(" ");
-    //   let kv_values = parsed.kvs.iter().map(|(_, v)| v);
-    //
-    //   quote! {
-    //     {
-    //       const LEVEL: u8 = #level;
-    //       const MODULE: &'static str = module_path!();
-    //
-    //       static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-    //
-    //       ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-    //         if let Some(logger) = logger_cell.get() {
-    //           if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-    //             let target_id = *TARGET_ID.get_or_init(||
-    //               logger.interner.intern_target(MODULE));
-    //
-    //             let formatted = format!(#format_str, #(#kv_values),*);
-    //             let message_id = logger.interner.intern_message(&formatted);
-    //
-    //             logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
-    //           }
-    //         }
-    //       });
-    //     }
-    //   }
-    // },
-    //
-    // // Case 4: Empty call - MINIMAL PATH
-    // (None, true) => {
-    //   quote! {
-    //     {
-    //       const LEVEL: u8 = #level;
-    //       const MODULE: &'static str = module_path!();
-    //
-    //       static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-    //       static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-    //
-    //       ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-    //         if let Some(logger) = logger_cell.get() {
-    //           if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-    //             let target_id = *TARGET_ID.get_or_init(||
-    //               logger.interner.intern_target(MODULE));
-    //             let message_id = *MESSAGE_ID.get_or_init(||
-    //               logger.interner.intern_message(""));
-    //
-    //             logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr);
-    //           }
-    //         }
-    //       });
-    //     }
-    //   }
-    // },
+    // _ => unimplemented!(),
+    // Case 2: Message with key-values - OPTIMIZED PATH
+    (Some(message), false) => {
+      // Pre-build format string at compile time
+      let format_parts: Vec<String> = parsed
+        .kvs
+        .iter()
+        .map(|(k, _)| format!("{}={{:?}}", k))
+        .collect();
+      let format_str = if format_parts.is_empty() {
+        message.value().to_string()
+      } else {
+        format!("{} {}", message.value(), format_parts.join(" "))
+      };
+
+      let kv_values = parsed.kvs.iter().map(|(_, v)| v);
+
+      quote! {
+        {
+          const LEVEL: u8 = #level;
+          const MESSAGE: &'static str = #message;
+          const MODULE: &'static str = module_path!();
+          const FILE: &'static str = file!();
+          const POSITION: (u32, u32) = (line!(), column!());
+
+          // Static caching - these are computed only once per call site
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+                // Format only when needed, intern immediately
+                let formatted = format!(#format_str, #(#kv_values),*);
+                let message_id = logger.interner.intern_message(&formatted);
+                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+              }
+            }
+          });
+        }
+      }
+    },
+
+    // Case 3: No message, only key-values - COMPACT PATH
+    (None, false) => {
+      let format_parts: Vec<String> = parsed
+        .kvs
+        .iter()
+        .map(|(k, _)| format!("{}={{:?}}", k))
+        .collect();
+      let format_str = format_parts.join(" ");
+      let kv_values = parsed.kvs.iter().map(|(_, v)| v);
+
+      quote! {
+        {
+          const LEVEL: u8 = #level;
+          const MODULE: &'static str = module_path!();
+          const FILE: &'static str = file!();
+          const POSITION: (u32, u32) = (line!(), column!());
+
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+                let formatted = format!(#format_str, #(#kv_values),*);
+                let message_id = logger.interner.intern_message(&formatted);
+                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+              }
+            }
+          });
+        }
+      }
+    },
+
+    // Case 4: Empty call - MINIMAL PATH
+    (None, true) => {
+      quote! {
+        {
+          const LEVEL: u8 = #level;
+          const MODULE: &'static str = module_path!();
+          const FILE: &'static str = file!();
+          const POSITION: (u32, u32) = (line!(), column!());
+
+          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
+            if let Some(logger) = logger_cell.get() {
+              if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+                let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(""));
+                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
+
+                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+              }
+            }
+          });
+        }
+      }
+    },
   }
   .into()
 }

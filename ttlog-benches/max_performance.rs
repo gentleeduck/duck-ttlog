@@ -457,9 +457,6 @@ impl MemoryEfficiencyTester {
       for event in &events {
         let mut event_memory = std::mem::size_of::<LogEvent>();
 
-        // Add estimated field data size based on field count
-        event_memory += event.field_count as usize * 16; // Rough estimate per field
-
         // Add message overhead (strings are interned, so minimal per-event cost)
         event_memory += 32; // Estimated overhead for interned strings and metadata
 
