@@ -7,6 +7,7 @@ use std::{sync::Arc, thread};
 
 use crate::event::{LogEvent, LogLevel};
 use crate::lf_buffer::LockFreeRingBuffer;
+use crate::listener::LogListener;
 use crate::panic_hook::PanicHook;
 use crate::snapshot::SnapshotWriter;
 use crate::string_interner::StringInterner;
@@ -15,15 +16,18 @@ use std::sync::atomic::{self, AtomicU8, Ordering};
 
 #[derive(Debug)]
 pub enum Message {
-  Event(LogEvent),
   SnapshotImmediate(&'static str),
   FlushAndExit,
+}
+
+pub enum ListenerMessage {
+  Add(Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>),
+  Shutdown,
 }
 
 impl std::fmt::Display for Message {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Message::Event(ev) => write!(f, "Event: {}", ev),
       Message::SnapshotImmediate(reason) => write!(f, "SnapshotImmediate: {}", reason),
       Message::FlushAndExit => write!(f, "FlushAndExit"),
     }
@@ -32,13 +36,16 @@ impl std::fmt::Display for Message {
 
 #[derive(Debug)]
 pub struct Trace {
-  /// Direct reference to ring buffer for zero-copy fast path
-  pub ring_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+  /// For real-time listeners (gets drained continuously)
+  pub listener_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+  /// For snapshots (accumulates events, only drained on snapshot)
+  pub snapshot_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
   /// Channel sender for communicating with the writer thread
   pub sender: Sender<Message>,
   /// Atomic log level for runtime filtering
   pub level: atomic::AtomicU8,
   pub interner: Arc<StringInterner>,
+  listener_sender: Sender<ListenerMessage>,
 }
 
 thread_local! {
@@ -48,37 +55,74 @@ thread_local! {
 impl Trace {
   pub fn new(
     sender: Sender<Message>,
+    listener_sender: Sender<ListenerMessage>,
     interner: Arc<StringInterner>,
-    ring_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+    listener_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+    snapshot_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
   ) -> Self {
     Self {
       sender,
-      ring_buffer,
+      listener_buffer,
+      snapshot_buffer,
       interner,
+      listener_sender,
       level: AtomicU8::new(LogLevel::ERROR as u8),
     }
   }
 
   pub fn init(capacity: usize, channel_capacity: usize, service_name: &str) -> Self {
     let (sender, receiver) = crossbeam_channel::bounded::<Message>(channel_capacity);
+    let (listener_sender, listener_receiver) = crossbeam_channel::bounded::<ListenerMessage>(16);
+
     let interner = Arc::new(StringInterner::new());
-    let ring_buffer = Arc::new(LockFreeRingBuffer::new(capacity));
+
+    // Create separate buffers for listeners and snapshots
+    let listener_buffer = Arc::new(LockFreeRingBuffer::new(capacity));
+    let snapshot_buffer = Arc::new(LockFreeRingBuffer::new(capacity));
+
+    let listener_buffer_clone = Arc::clone(&listener_buffer);
+    let snapshot_buffer_clone = Arc::clone(&snapshot_buffer);
+    let interner_clone = Arc::clone(&interner);
 
     // Install panic hook before spawning writer thread
     PanicHook::install(sender.clone());
 
-    // Spawn writer thread which owns the ring buffer
-    let writer_interner = Arc::clone(&interner);
+    // Spawn writer thread with listener support
     let service_name = service_name.to_string();
-    thread::spawn(move || Self::writer_loop(receiver, capacity, writer_interner, service_name));
+    thread::spawn(move || {
+      Self::writer_loop_with_listeners(
+        receiver,
+        listener_receiver,
+        capacity,
+        service_name,
+        listener_buffer_clone,
+        snapshot_buffer_clone,
+        interner_clone,
+      )
+    });
 
-    let trace = Trace::new(sender, interner, ring_buffer);
+    let trace = Trace::new(
+      sender,
+      listener_sender,
+      interner,
+      listener_buffer,
+      snapshot_buffer,
+    );
     GLOBAL_LOGGER.with(|logger_cell| match logger_cell.set(trace.clone()) {
       Ok(_) => {},
       Err(_) => panic!("GLOBAL_LOGGER already initialized"),
     });
 
     trace
+  }
+
+  pub fn add_listener(
+    &self,
+    listener: Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>,
+  ) {
+    let _ = self
+      .listener_sender
+      .try_send(ListenerMessage::Add(listener));
   }
 
   pub fn shutdown(&self) {
@@ -92,8 +136,22 @@ impl Trace {
   }
 
   pub fn request_snapshot(&self, reason: &'static str) {
-    // Remove string allocation
-    let _ = self.sender.try_send(Message::SnapshotImmediate(reason));
+    eprintln!("[Snapshot Request] Captured snapshot request: {:?}", reason);
+
+    // non-blocking attempt to enqueue; do NOT block in Snapshot Request handler
+    if let Err(e) = self.sender.try_send(Message::SnapshotImmediate(reason)) {
+      eprintln!(
+        "[Snapshot Request] Unable to enqueue snapshot request: {:?}",
+        e
+      );
+    } else {
+      eprintln!("[Snapshot Request] Snapshot request enqueued");
+    }
+
+    // Give the writer thread time to process the snapshot
+    thread::sleep(Duration::milliseconds(120).to_std().unwrap());
+
+    eprintln!("[Snapshot Request] Snapshot request completed");
   }
 
   pub fn set_level(&self, level: LogLevel) {
@@ -141,70 +199,150 @@ impl Trace {
       _padding: [0; 9],
     };
 
-    // Direct ring buffer push - bypass channel for hot path
-    self.ring_buffer.push_overwrite(event);
+    // Push to both buffers - listeners get real-time events, snapshots accumulate
+    self.listener_buffer.push_overwrite(event.clone());
+    self.snapshot_buffer.push_overwrite(event);
   }
 
-  fn writer_loop(
+  fn writer_loop_with_listeners(
     receiver: crossbeam_channel::Receiver<Message>,
+    listener_receiver: crossbeam_channel::Receiver<ListenerMessage>,
     capacity: usize,
-    interner: Arc<StringInterner>, // Keep reference for potential future use
     service_name: String,
+    listener_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+    mut snapshot_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
+    interner: Arc<StringInterner>,
   ) {
-    let mut ring = LockFreeRingBuffer::new(capacity);
     let mut last_periodic = Instant::now();
     let periodic_flush_interval = Duration::seconds(60).to_std().unwrap();
     let service = SnapshotWriter::new(service_name);
+
+    // Listener management
+    let mut listeners: Vec<
+      Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>,
+    > = Vec::new();
 
     eprintln!(
       "[Trace] Writer thread started with buffer capacity: {}",
       capacity
     );
 
-    while let Ok(msg) = receiver.recv() {
-      match msg {
-        Message::Event(ev) => {
-          // Store event in ring buffer (may overwrite oldest on overflow)
-          let _result = ring.push(ev);
-        },
-        Message::SnapshotImmediate(reason) => {
-          if !ring.is_empty() {
-            if let Err(e) = service.snapshot_and_write(&mut ring, reason) {
-              eprintln!("[Snapshot] failed: {}", e);
+    // Main event loop - handles both log events and listener management
+    loop {
+      // Handle control messages first
+      if let Ok(msg) = receiver.try_recv() {
+        match msg {
+          Message::SnapshotImmediate(reason) => {
+            eprintln!(
+              "[Snapshot] Requested: {} (buffer has {} events)",
+              reason,
+              snapshot_buffer.len()
+            );
+
+            if !snapshot_buffer.is_empty() {
+              if let Err(e) = service.snapshot_and_write(&mut snapshot_buffer, reason) {
+                eprintln!("[Snapshot] failed: {}", e);
+              } else {
+                eprintln!("[Snapshot] completed successfully");
+              }
+            } else {
+              eprintln!("[Snapshot] buffer empty, skipping snapshot");
             }
-          } else {
-            eprintln!("[Snapshot] buffer empty, skipping snapshot");
-          }
-        },
-        Message::FlushAndExit => {
-          eprintln!("[Trace] Received shutdown signal, performing final flush");
-          // Final flush before shutdown
-          if !ring.is_empty() {
-            let _result = service.snapshot_and_write(&mut ring, "flush_and_exit");
-          }
-          eprintln!("[Trace] Writer thread shutting down");
-          break;
-        },
+          },
+          Message::FlushAndExit => {
+            eprintln!("[Trace] Received shutdown signal");
+
+            // Final flush - process remaining listener events
+            while let Some(event) = listener_buffer.pop() {
+              for listener in &listeners {
+                let _ = std::panic::catch_unwind(|| {
+                  listener.handle(&event, &interner);
+                });
+              }
+            }
+
+            // Cleanup listeners
+            for listener in &listeners {
+              listener.on_shutdown();
+            }
+
+            // Final snapshot with remaining events
+            if !snapshot_buffer.is_empty() {
+              let _ = service.snapshot_and_write(&mut snapshot_buffer, "flush_and_exit");
+            }
+
+            eprintln!("[Trace] Writer thread shutting down");
+            return;
+          },
+        }
       }
 
-      // Periodic flush every 60 seconds
-      if last_periodic.elapsed() >= periodic_flush_interval && !ring.is_empty() {
-        let _result = service.snapshot_and_write(&mut ring, "periodic");
+      // Check for new listeners (non-blocking)
+      while let Ok(listener_msg) = listener_receiver.try_recv() {
+        match listener_msg {
+          ListenerMessage::Add(listener) => {
+            listener.on_start();
+            listeners.push(listener);
+            eprintln!("[Trace] Added new listener, total: {}", listeners.len());
+          },
+          ListenerMessage::Shutdown => {
+            for listener in &listeners {
+              listener.on_shutdown();
+            }
+            return;
+          },
+        }
+      }
+
+      // Process log events for listeners - drain listener buffer
+      let mut events_processed = 0;
+      while let Some(event) = listener_buffer.pop() {
+        // Fanout to all listeners - isolated panic handling
+        for listener in &listeners {
+          let result = std::panic::catch_unwind(|| {
+            listener.handle(&event, &interner);
+          });
+
+          if result.is_err() {
+            eprintln!("[Trace] Listener panicked, continuing with others");
+          }
+        }
+
+        events_processed += 1;
+
+        // Batch processing - don't monopolize the thread
+        if events_processed >= 100 {
+          break;
+        }
+      }
+
+      // Periodic snapshot (keep existing behavior) - use snapshot buffer
+      if last_periodic.elapsed() >= periodic_flush_interval && !snapshot_buffer.is_empty() {
+        eprintln!(
+          "[Snapshot] Periodic snapshot triggered ({} events)",
+          snapshot_buffer.len()
+        );
+        let _result = service.snapshot_and_write(&mut snapshot_buffer, "periodic");
         last_periodic = Instant::now();
       }
-    }
 
-    eprintln!("[Trace] Writer thread terminated");
+      // Small yield to prevent busy waiting when no events
+      if events_processed == 0 {
+        thread::sleep(std::time::Duration::from_micros(100));
+      }
+    }
   }
 }
 
 impl Clone for Trace {
   fn clone(&self) -> Self {
     Self {
-      ring_buffer: Arc::clone(&self.ring_buffer),
+      listener_buffer: Arc::clone(&self.listener_buffer),
+      snapshot_buffer: Arc::clone(&self.snapshot_buffer),
       sender: self.sender.clone(),
       level: AtomicU8::new(self.level.load(Ordering::Relaxed)),
       interner: Arc::clone(&self.interner),
+      listener_sender: self.listener_sender.clone(),
     }
   }
 }

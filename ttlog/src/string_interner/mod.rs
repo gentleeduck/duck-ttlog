@@ -11,11 +11,9 @@ use std::{
 struct LocalCache {
   target_cache: [(u64, u16); 16],
   message_cache: [(u64, u16); 16],
-  field_cache: [(u64, u16); 16],
   file_cache: [(u64, u16); 16],
   target_counter: u8,
   message_counter: u8,
-  field_counter: u8,
   file_counter: u8,
 }
 
@@ -24,11 +22,9 @@ impl LocalCache {
     Self {
       target_cache: [(0, 0); 16],
       message_cache: [(0, 0); 16],
-      field_cache: [(0, 0); 16],
       file_cache: [(0, 0); 16],
       target_counter: 0,
       message_counter: 0,
-      field_counter: 0,
       file_counter: 0,
     }
   }
@@ -69,20 +65,6 @@ impl LocalCache {
     self.message_counter = self.message_counter.wrapping_add(1);
   }
 
-  fn get_field(&self, hash: u64) -> Option<u16> {
-    self
-      .field_cache
-      .iter()
-      .find(|(h, _)| *h == hash)
-      .map(|(_, id)| *id)
-  }
-
-  fn put_field(&mut self, hash: u64, id: u16) {
-    let idx = self.field_counter as usize % 8;
-    self.field_cache[idx] = (hash, id);
-    self.field_counter = self.field_counter.wrapping_add(1);
-  }
-
   fn put_file(&mut self, hash: u64, id: u16) {
     let idx = self.file_counter as usize % 8;
     self.file_cache[idx] = (hash, id);
@@ -103,7 +85,6 @@ pub struct StringInterner {
 
   target_lookup: RwLock<HashMap<u64, u16>>,
   message_lookup: RwLock<HashMap<u64, u16>>,
-  field_lookup: RwLock<HashMap<u64, u16>>,
   file_lookup: RwLock<HashMap<u64, u16>>,
 
   target_count: AtomicU16,
@@ -121,7 +102,6 @@ impl StringInterner {
       files: RwLock::new(Vec::with_capacity(512)),
       target_lookup: RwLock::new(HashMap::with_capacity(256)),
       message_lookup: RwLock::new(HashMap::with_capacity(4096)),
-      field_lookup: RwLock::new(HashMap::with_capacity(512)),
       file_lookup: RwLock::new(HashMap::with_capacity(512)),
       target_count: AtomicU16::new(0),
       message_count: AtomicU16::new(0),
@@ -180,28 +160,6 @@ impl StringInterner {
 
       unsafe {
         (*cache_ptr).put_message(hash, id);
-      }
-
-      id
-    })
-  }
-
-  #[inline]
-  pub fn intern_field(&self, string: &str) -> u16 {
-    let hash = self.fast_hash(string);
-
-    LOCAL_CACHE.with(|cache| {
-      let cache_ptr = cache.get();
-      unsafe {
-        if let Some(id) = (*cache_ptr).get_field(hash) {
-          return id;
-        }
-      }
-
-      let id = self.intern_string_slow(string, &self.fields, &self.field_lookup, &self.field_count);
-
-      unsafe {
-        (*cache_ptr).put_field(hash, id);
       }
 
       id

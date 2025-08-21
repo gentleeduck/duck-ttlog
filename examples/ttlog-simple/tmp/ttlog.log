@@ -1,0 +1,7 @@
+[INFO] ttlog_simple::example_simple: Application started successfully
+[WARN] ttlog_simple::example_simple: This is a warning message
+[ERROR] ttlog_simple::example_simple: This is an error message
+[INFO] ttlog_simple::example_simple: User logged in user_id=42 username="alice"
+[INFO] ttlog_simple::example_simple: Application started successfully
+[WARN] ttlog_simple::example_simple: This is a warning message
+[ERROR] ttlog_simple::example_simple: This is an error message

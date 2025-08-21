@@ -5,6 +5,7 @@ use lz4::block::{compress, CompressionMode};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
+use std::sync::Arc;
 
 use crate::event::LogEvent;
 use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
@@ -33,7 +34,7 @@ impl SnapshotWriter {
 
   pub fn create_snapshot(
     &self,
-    ring: &mut RingBuffer<LogEvent>,
+    ring: &mut Arc<RingBuffer<LogEvent>>,
     reason: impl Into<String>,
   ) -> Option<Snapshot> {
     let events = ring.take_snapshot();
@@ -84,7 +85,7 @@ impl SnapshotWriter {
 
   pub fn snapshot_and_write(
     &self,
-    ring: &mut RingBuffer<LogEvent>,
+    ring: &mut Arc<RingBuffer<LogEvent>>,
     reason: impl Into<String>,
   ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(snapshot) = self.create_snapshot(ring, reason) {
