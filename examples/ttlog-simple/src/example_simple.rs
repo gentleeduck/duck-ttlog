@@ -14,8 +14,9 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   // Step 1: Initialize the tracing system
   // Parameters: (ring_buffer_capacity, channel_capacity)
   // ttlog::stdout_listener::init_stdout();
-  let trace = Trace::init(4096, 64, "default");
+  let trace = Trace::init(4096, 64, "default", Some("./tmp/"));
   trace.add_listener(Arc::new(FileListener::new("./tmp/ttlog.log")?));
+  trace.add_listener(Arc::new(ttlog::stdout_listener::StdoutListener::new()));
 
   // Step 2: Use standard tracing macros to log
   info!("Application started successfully");
@@ -36,8 +37,8 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   //   error!("Something went wrong before panic");
   //   panic!("Simulated application crash!");
   // });
-  trace.request_snapshot("done");
-  // panic!("Simulated application crash!");
+  // trace.request_snapshot("done");
+  panic!("Simulated application crash!");
   // Step 4: Request a manual snapshot (optional)
   // trace_system.request_snapshot("quick_start_example");
 

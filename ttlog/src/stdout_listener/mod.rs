@@ -52,14 +52,14 @@ impl LogListener for StdoutListener {
 
 /// Initialize ttlog with stdout output - fastest setup
 pub fn init_stdout() -> Result<(), Box<dyn std::error::Error>> {
-  let trace = Trace::init(4096, 64, "default");
+  let trace = Trace::init(4096, 64, "default", Some("./logs/"));
   trace.add_listener(Arc::new(StdoutListener::new()));
   Ok(())
 }
 
 /// Initialize with custom capacity
 pub fn init_stdout_with_capacity(capacity: usize) -> Result<(), Box<dyn std::error::Error>> {
-  let trace = Trace::init(capacity, 64, "default");
+  let trace = Trace::init(capacity, 64, "default", Some("./logs/"));
   trace.add_listener(Arc::new(StdoutListener::new()));
   Ok(())
 }

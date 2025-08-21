@@ -45,7 +45,7 @@ pub struct Trace {
   /// Atomic log level for runtime filtering
   pub level: atomic::AtomicU8,
   pub interner: Arc<StringInterner>,
-  listener_sender: Sender<ListenerMessage>,
+  pub listener_sender: Sender<ListenerMessage>,
 }
 
 thread_local! {
@@ -70,7 +70,12 @@ impl Trace {
     }
   }
 
-  pub fn init(capacity: usize, channel_capacity: usize, service_name: &str) -> Self {
+  pub fn init(
+    capacity: usize,
+    channel_capacity: usize,
+    service_name: &str,
+    storage_path: Option<&str>,
+  ) -> Self {
     let (sender, receiver) = crossbeam_channel::bounded::<Message>(channel_capacity);
     let (listener_sender, listener_receiver) = crossbeam_channel::bounded::<ListenerMessage>(16);
 
@@ -89,12 +94,14 @@ impl Trace {
 
     // Spawn writer thread with listener support
     let service_name = service_name.to_string();
+    let storage_path = storage_path.ok_or("").unwrap().to_string();
     thread::spawn(move || {
       Self::writer_loop_with_listeners(
         receiver,
         listener_receiver,
         capacity,
         service_name,
+        storage_path,
         listener_buffer_clone,
         snapshot_buffer_clone,
         interner_clone,
@@ -209,13 +216,14 @@ impl Trace {
     listener_receiver: crossbeam_channel::Receiver<ListenerMessage>,
     capacity: usize,
     service_name: String,
+    storage_path: String,
     listener_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
     mut snapshot_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
     interner: Arc<StringInterner>,
   ) {
     let mut last_periodic = Instant::now();
     let periodic_flush_interval = Duration::seconds(60).to_std().unwrap();
-    let service = SnapshotWriter::new(service_name);
+    let service = SnapshotWriter::new(service_name, storage_path);
 
     // Listener management
     let mut listeners: Vec<

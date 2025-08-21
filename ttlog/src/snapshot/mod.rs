@@ -23,12 +23,14 @@ pub struct Snapshot {
 #[derive(Debug, Clone)]
 pub struct SnapshotWriter {
   service: String,
+  storage_path: String,
 }
 
 impl SnapshotWriter {
-  pub fn new(service: impl Into<String>) -> Self {
+  pub fn new(service: impl Into<String>, storage_path: impl Into<String>) -> Self {
     Self {
       service: service.into(),
+      storage_path: storage_path.into(),
     }
   }
 
@@ -62,19 +64,29 @@ impl SnapshotWriter {
     // Compress
     let compressed = compress(&cbor_buff, Some(CompressionMode::DEFAULT), true)?;
 
+    let path = if self.storage_path == "" {
+      eprintln!("[Snapshot] No storage path set");
+      "./tmp/".to_string()
+    } else {
+      self.storage_path.clone()
+    };
+
     // Build filename and write atomically
     let filename = format!(
-      "/tmp/ttlog-{}-{}-{}.bin",
-      snapshot.pid, snapshot.created_at, snapshot.reason
+      "{}/ttlog-{}-{}-{}.bin",
+      path, snapshot.pid, snapshot.created_at, snapshot.reason
     );
-    let tmp = format!("{}.tmp", &filename);
+
+    // Ensure directory exists
+    std::fs::create_dir_all(&path)?;
 
     {
-      let mut f = File::create(&tmp)?;
+      let mut f = File::create(&filename)?;
       f.write_all(&compressed)?;
       f.sync_all()?;
     }
-    fs::rename(&tmp, &filename)?;
+
+    fs::rename(&filename, &filename)?;
     eprintln!(
       "[Snapshot] Saved {} events to {}",
       snapshot.events.len(),

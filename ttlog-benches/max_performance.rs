@@ -111,7 +111,7 @@ impl ThroughputTester {
   /// Test maximum events per second
   fn max_events_per_second(&self, buffer_size: usize) -> TestResult {
     let start = Instant::now();
-    let _trace_system = Trace::init(buffer_size, buffer_size / 10, "test");
+    let _trace_system = Trace::init(buffer_size, buffer_size / 10, "test", Some("/tmp/"));
     let event_count = Arc::new(AtomicU64::new(0));
     let stop_flag = Arc::new(AtomicBool::new(false));
     let thread_count = 16; // Optimal thread count for maximum throughput

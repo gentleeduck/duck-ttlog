@@ -15,7 +15,7 @@ pub struct FileListener {
 }
 
 impl FileListener {
-  /// Open (or create) file for appending logs
+  /// Open (or create if missing) file for appending logs
   pub fn new(path: &str) -> io::Result<Self> {
     let path_obj = Path::new(path);
 
@@ -23,13 +23,12 @@ impl FileListener {
     if let Some(parent) = path_obj.parent() {
       std::fs::create_dir_all(parent)?;
     }
-    println!("TTLog Quick Start Example -----------------------------------------------");
 
-    // Create (or overwrite) the file
+    // Open existing file, or create if missing
     let file = OpenOptions::new()
-      .create(true)
-      .write(true)
-      .truncate(true) // clears old file contents
+      .create(true) // only creates if it doesn’t exist
+      .write(true) // allow writing
+      .append(true) // don’t truncate, just append
       .open(path_obj)?;
 
     Ok(Self {
@@ -71,7 +70,7 @@ impl LogListener for FileListener {
 
 /// Initialize ttlog with file output
 pub fn init_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-  let trace = Trace::init(4096, 64, "default");
+  let trace = Trace::init(4096, 64, "default", Some("./logs/"));
   trace.add_listener(Arc::new(FileListener::new(path)?));
   Ok(())
 }
