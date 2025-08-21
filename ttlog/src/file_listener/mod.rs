@@ -47,7 +47,13 @@ impl LogListener for FileListener {
       let target_opt = interner.get_target(event.target_id);
       let target = target_opt.as_deref().unwrap_or("unknown");
 
-      let message_opt = interner.get_message(event.message_id);
+      let message_opt = interner.get_message(match event.message_id {
+        Some(v) => v,
+        None => {
+          eprintln!("[Trace] Unknown message id: {}", event.message_id.unwrap());
+          return;
+        },
+      });
       let message = message_opt.as_deref().unwrap_or("unknown");
 
       // Format log line

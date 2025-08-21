@@ -12,7 +12,7 @@ mod __test__ {
     // Verify initial state
     assert_eq!(interner.targets.read().unwrap().len(), 0);
     assert_eq!(interner.messages.read().unwrap().len(), 0);
-    assert_eq!(interner.fields.read().unwrap().len(), 0);
+    assert_eq!(interner.kvs.read().unwrap().len(), 0);
   }
 
   #[test]
@@ -72,7 +72,7 @@ mod __test__ {
     assert_eq!(id3, 1);
 
     // Verify storage
-    assert_eq!(interner.fields.read().unwrap().len(), 2);
+    assert_eq!(interner.kvs.read().unwrap().len(), 2);
   }
 
   #[test]
@@ -112,15 +112,15 @@ mod __test__ {
     let interner = StringInterner::new();
 
     // Get non-existent field
-    assert!(interner.get_field(0).is_none());
+    assert!(interner.get_kv(0).is_none());
 
     // Intern and retrieve field
     let id = interner.intern_field("test_field");
-    let retrieved = interner.get_field(id).unwrap();
+    let retrieved = interner.get_kv(id).unwrap();
     assert_eq!(retrieved.as_ref(), "test_field");
 
     // Get non-existent field with high ID
-    assert!(interner.get_field(999).is_none());
+    assert!(interner.get_kv(999).is_none());
   }
 
   #[test]
@@ -167,7 +167,7 @@ mod __test__ {
     // Verify final counts (1 common + 10 unique for each type)
     assert_eq!(interner.targets.read().unwrap().len(), 11);
     assert_eq!(interner.messages.read().unwrap().len(), 11);
-    assert_eq!(interner.fields.read().unwrap().len(), 11);
+    assert_eq!(interner.kvs.read().unwrap().len(), 11);
   }
 
   #[test]
@@ -182,7 +182,7 @@ mod __test__ {
     // Verify they can be retrieved
     assert_eq!(interner.get_target(target_id).unwrap().as_ref(), "");
     assert_eq!(interner.get_message(message_id).unwrap().as_ref(), "");
-    assert_eq!(interner.get_field(field_id).unwrap().as_ref(), "");
+    assert_eq!(interner.get_kv(field_id).unwrap().as_ref(), "");
   }
 
   #[test]
@@ -206,7 +206,7 @@ mod __test__ {
       interner.get_message(message_id).unwrap().as_ref(),
       large_string
     );
-    assert_eq!(interner.get_field(field_id).unwrap().as_ref(), large_string);
+    assert_eq!(interner.get_kv(field_id).unwrap().as_ref(), large_string);
   }
 
   #[test]
@@ -235,7 +235,7 @@ mod __test__ {
         interner.get_message(message_id).unwrap().as_ref(),
         *unicode_str
       );
-      assert_eq!(interner.get_field(field_id).unwrap().as_ref(), *unicode_str);
+      assert_eq!(interner.get_kv(field_id).unwrap().as_ref(), *unicode_str);
     }
   }
 }

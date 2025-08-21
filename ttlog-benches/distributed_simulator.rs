@@ -76,7 +76,9 @@ impl DatabaseNode {
       }
 
       // Log operation (new API)
-      let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+      let interner = INTERNER
+        .get_or_init(|| Arc::new(StringInterner::new()))
+        .clone();
       let event = BUILDER.with(|cell| {
         if cell.borrow().is_none() {
           *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
@@ -87,9 +89,18 @@ impl DatabaseNode {
         let msg = format!("Database operation: {} {} = {}", operation, key, value);
         let fields: Vec<(String, FieldValue)> = vec![
           ("node_id".to_string(), FieldValue::U64(self.node_id as u64)),
-          ("operation".to_string(), FieldValue::StringId(interner.intern_field(operation))),
-          ("key".to_string(), FieldValue::StringId(interner.intern_field(&key))),
-          ("value".to_string(), FieldValue::StringId(interner.intern_field(&value))),
+          (
+            "operation".to_string(),
+            FieldValue::StringId(interner.intern_field(operation)),
+          ),
+          (
+            "key".to_string(),
+            FieldValue::StringId(interner.intern_field(&key)),
+          ),
+          (
+            "value".to_string(),
+            FieldValue::StringId(interner.intern_field(&value)),
+          ),
         ];
         builder.build_with_fields(ts, LogLevel::INFO, "database_node", &msg, &fields)
       });
@@ -159,7 +170,9 @@ impl Microservice {
       thread::sleep(processing_time);
 
       // Log request (new API)
-      let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+      let interner = INTERNER
+        .get_or_init(|| Arc::new(StringInterner::new()))
+        .clone();
       let event = BUILDER.with(|cell| {
         if cell.borrow().is_none() {
           *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
@@ -168,12 +181,28 @@ impl Microservice {
         let builder = builder_ref.as_mut().unwrap();
         let ts = chrono::Utc::now().timestamp_millis() as u64;
         let msg = format!("API request: {} {} -> {}", method, endpoint, status_code);
-        let level = if status_code < 400 { LogLevel::INFO } else { LogLevel::WARN };
+        let level = if status_code < 400 {
+          LogLevel::INFO
+        } else {
+          LogLevel::WARN
+        };
         let fields: Vec<(String, FieldValue)> = vec![
-          ("service_id".to_string(), FieldValue::U64(self.service_id as u64)),
-          ("method".to_string(), FieldValue::StringId(interner.intern_field(method))),
-          ("endpoint".to_string(), FieldValue::StringId(interner.intern_field(&endpoint))),
-          ("status_code".to_string(), FieldValue::U64(status_code as u64)),
+          (
+            "service_id".to_string(),
+            FieldValue::U64(self.service_id as u64),
+          ),
+          (
+            "method".to_string(),
+            FieldValue::StringId(interner.intern_field(method)),
+          ),
+          (
+            "endpoint".to_string(),
+            FieldValue::StringId(interner.intern_field(&endpoint)),
+          ),
+          (
+            "status_code".to_string(),
+            FieldValue::U64(status_code as u64),
+          ),
           (
             "processing_time_ms".to_string(),
             FieldValue::U64(processing_time.as_millis() as u64),
@@ -230,7 +259,9 @@ impl MessageQueue {
       let handle = thread::spawn(move || {
         let mut produced = 0;
         for i in 0..message_count {
-          let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+          let interner = INTERNER
+            .get_or_init(|| Arc::new(StringInterner::new()))
+            .clone();
           let event = BUILDER.with(|cell| {
             if cell.borrow().is_none() {
               *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
@@ -241,9 +272,15 @@ impl MessageQueue {
             let msg = format!("Produced message {} from producer {}", i, producer_id);
             let fields: Vec<(String, FieldValue)> = vec![
               ("queue_id".to_string(), FieldValue::U64(queue_id as u64)),
-              ("producer_id".to_string(), FieldValue::U64(producer_id as u64)),
+              (
+                "producer_id".to_string(),
+                FieldValue::U64(producer_id as u64),
+              ),
               ("message_id".to_string(), FieldValue::U64(i as u64)),
-              ("action".to_string(), FieldValue::StringId(interner.intern_field("produce"))),
+              (
+                "action".to_string(),
+                FieldValue::StringId(interner.intern_field("produce")),
+              ),
             ];
             builder.build_with_fields(ts, LogLevel::INFO, "message_queue", &msg, &fields)
           });
@@ -273,7 +310,9 @@ impl MessageQueue {
             consumed += 1;
 
             // Log consumption
-            let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+            let interner = INTERNER
+              .get_or_init(|| Arc::new(StringInterner::new()))
+              .clone();
             let _consume_event = BUILDER.with(|cell| {
               if cell.borrow().is_none() {
                 *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
@@ -284,9 +323,15 @@ impl MessageQueue {
               let msg = format!("Consumed message by consumer {}", consumer_id);
               let fields: Vec<(String, FieldValue)> = vec![
                 ("queue_id".to_string(), FieldValue::U64(queue_id as u64)),
-                ("consumer_id".to_string(), FieldValue::U64(consumer_id as u64)),
+                (
+                  "consumer_id".to_string(),
+                  FieldValue::U64(consumer_id as u64),
+                ),
                 ("consumed_count".to_string(), FieldValue::U64(consumed)),
-                ("action".to_string(), FieldValue::StringId(interner.intern_field("consume"))),
+                (
+                  "action".to_string(),
+                  FieldValue::StringId(interner.intern_field("consume")),
+                ),
               ];
               builder.build_with_fields(ts, LogLevel::INFO, "message_queue", &msg, &fields)
             });
@@ -382,7 +427,9 @@ impl DistributedCache {
       }
 
       // Log cache operation (new API)
-      let interner = INTERNER.get_or_init(|| Arc::new(StringInterner::new())).clone();
+      let interner = INTERNER
+        .get_or_init(|| Arc::new(StringInterner::new()))
+        .clone();
       let event = BUILDER.with(|cell| {
         if cell.borrow().is_none() {
           *cell.borrow_mut() = Some(EventBuilder::new(interner.clone()));
@@ -392,9 +439,18 @@ impl DistributedCache {
         let ts = chrono::Utc::now().timestamp_millis() as u64;
         let msg = format!("Cache operation: {} {}", operation, key);
         let fields: Vec<(String, FieldValue)> = vec![
-          ("cache_id".to_string(), FieldValue::U64(self.cache_id as u64)),
-          ("operation".to_string(), FieldValue::StringId(interner.intern_field(operation))),
-          ("key".to_string(), FieldValue::StringId(interner.intern_field(&key))),
+          (
+            "cache_id".to_string(),
+            FieldValue::U64(self.cache_id as u64),
+          ),
+          (
+            "operation".to_string(),
+            FieldValue::StringId(interner.intern_field(operation)),
+          ),
+          (
+            "key".to_string(),
+            FieldValue::StringId(interner.intern_field(&key)),
+          ),
           (
             "hit_count".to_string(),
             FieldValue::U64(self.hit_count.load(Ordering::Relaxed)),

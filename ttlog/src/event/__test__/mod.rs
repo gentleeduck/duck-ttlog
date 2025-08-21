@@ -289,9 +289,9 @@ mod __test__ {
     assert_eq!(message.as_ref(), "Error occurred");
 
     // Verify field keys are interned
-    let key1 = interner.get_field(event.fields[0].key_id).unwrap();
-    let key2 = interner.get_field(event.fields[1].key_id).unwrap();
-    let key3 = interner.get_field(event.fields[2].key_id).unwrap();
+    let key1 = interner.get_kv(event.fields[0].key_id).unwrap();
+    let key2 = interner.get_kv(event.fields[1].key_id).unwrap();
+    let key3 = interner.get_kv(event.fields[2].key_id).unwrap();
     assert_eq!(key1.as_ref(), "key1");
     assert_eq!(key2.as_ref(), "key2");
     assert_eq!(key3.as_ref(), "key3");

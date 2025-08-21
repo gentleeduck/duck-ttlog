@@ -1351,8 +1351,10 @@ dependencies = [
 name = "ttlog-simple"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "tracing",
  "ttlog",
+ "uuid",
 ]
 
 [[package]]
@@ -1368,6 +1370,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_cbor",
+ "serde_json",
  "smallvec",
  "terminal_size",
  "tracing",
@@ -1391,6 +1394,17 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
+
+[[package]]
+name = "uuid"
+version = "1.18.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f33196643e165781c20a5ead5582283a7dacbb87855d867fbc2df3f81eddc1be"
+dependencies = [
+ "getrandom 0.3.3",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "valuable"

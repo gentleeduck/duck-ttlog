@@ -3,12 +3,14 @@ mod __test__;
 use chrono::Utc;
 use lz4::block::{compress, CompressionMode};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::Write;
 use std::sync::Arc;
 
 use crate::event::LogEvent;
 use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
+use crate::string_interner::StringInterner;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -17,20 +19,27 @@ pub struct Snapshot {
   pub pid: u32,
   pub created_at: String,
   pub reason: String,
-  pub events: Vec<LogEvent>,
+  pub events: Vec<ResolvedEvent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ResolvedEvent {
+  message: String,
+  target: String,
+  kv: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SnapshotWriter {
-  service: String,
-  storage_path: String,
+  service: Cow<'static, str>,
+  storage_path: Cow<'static, str>,
 }
 
 impl SnapshotWriter {
   pub fn new(service: impl Into<String>, storage_path: impl Into<String>) -> Self {
     Self {
-      service: service.into(),
-      storage_path: storage_path.into(),
+      service: Cow::Owned(service.into()),
+      storage_path: Cow::Owned(storage_path.into()),
     }
   }
 
@@ -38,8 +47,43 @@ impl SnapshotWriter {
     &self,
     ring: &mut Arc<RingBuffer<LogEvent>>,
     reason: impl Into<String>,
+    interner: Arc<StringInterner>,
   ) -> Option<Snapshot> {
-    let events = ring.take_snapshot();
+    let events: Vec<ResolvedEvent> = ring
+      .take_snapshot()
+      .iter()
+      .filter_map(|event| {
+        // Try to get all required values, early return None if missing
+        let message = match event.message_id.and_then(|id| interner.get_message(id)) {
+          Some(m) => m.to_string(),
+          None => {
+            eprintln!("[Trace] Unknown message id: {:?}", event.message_id);
+            return None;
+          },
+        };
+
+        let target = match interner.get_target(event.target_id) {
+          Some(t) => t.to_string(),
+          None => {
+            eprintln!("[Trace] Unknown target id: {}", event.target_id);
+            return None;
+          },
+        };
+
+        let kv = event
+          .kv_id
+          .and_then(|id| interner.get_kv(id))
+          .map(|s| s.to_string());
+
+        Some(ResolvedEvent {
+          message,
+          target,
+          kv,
+        })
+      })
+      .collect();
+
+    println!("[Snapshot] {:#?} events", events);
     if events.is_empty() {
       return None;
     }
@@ -49,7 +93,7 @@ impl SnapshotWriter {
     let created_at = Utc::now().format("%Y%m%d%H%M%S").to_string();
 
     Some(Snapshot {
-      service: self.service.clone(),
+      service: self.service.to_string(),
       hostname,
       pid,
       created_at,
@@ -64,11 +108,11 @@ impl SnapshotWriter {
     // Compress
     let compressed = compress(&cbor_buff, Some(CompressionMode::DEFAULT), true)?;
 
-    let path = if self.storage_path == "" {
+    let path = if self.storage_path.is_empty() {
       eprintln!("[Snapshot] No storage path set");
       "./tmp/".to_string()
     } else {
-      self.storage_path.clone()
+      self.storage_path.to_string()
     };
 
     // Build filename and write atomically
@@ -99,8 +143,9 @@ impl SnapshotWriter {
     &self,
     ring: &mut Arc<RingBuffer<LogEvent>>,
     reason: impl Into<String>,
+    interner: Arc<StringInterner>,
   ) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(snapshot) = self.create_snapshot(ring, reason) {
+    if let Some(snapshot) = self.create_snapshot(ring, reason, interner) {
       self.write_snapshot(&snapshot)
     } else {
       println!("[Snapshot] No events to snapshot");

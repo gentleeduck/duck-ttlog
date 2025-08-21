@@ -23,12 +23,12 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Formatter;
+use std::fs;
 use std::sync::{atomic::AtomicU64, atomic::Ordering, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, info, instrument, warn};
 use ttlog::{panic_hook::PanicHook, trace::Trace};
-use std::fs;
 
 // ============================================================================
 // CORE DISTRIBUTED SYSTEM TYPES
@@ -1906,7 +1906,7 @@ impl DistributedSystem {
     let chaos_engine = ChaosEngine::new(trace_system.clone());
 
     info!("Distributed system initializing with advanced observability");
-    
+
     // Don't request snapshot immediately - wait for events to be generated
     // trace_system.request_snapshot("system_initialization");
 
@@ -1922,14 +1922,14 @@ impl DistributedSystem {
   // Add a method to generate test events for testing
   fn generate_test_events(&self, count: usize) {
     info!("Generating {} test events to populate buffer", count);
-    
+
     for i in 0..count {
       info!(
         event_id = i,
         test_phase = "buffer_population",
         "Generating test event to populate buffer"
       );
-      
+
       if i % 20 == 0 {
         debug!(events_generated = i, "Buffer population progress");
       }
@@ -2547,7 +2547,7 @@ impl DistributedSystem {
   fn wait_for_snapshots(&self, expected_count: usize, timeout_secs: u64) -> bool {
     let start = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);
-    
+
     while start.elapsed() < timeout {
       let count = self.check_snapshot_files();
       if count >= expected_count {
@@ -2555,7 +2555,7 @@ impl DistributedSystem {
       }
       thread::sleep(Duration::from_millis(100));
     }
-    
+
     false
   }
 
@@ -2719,20 +2719,20 @@ mod ultimate_tests {
 
     // Wait for snapshots to be created with timeout
     let snapshots_created = system.wait_for_snapshots(1, 5);
-    
+
     system.graceful_shutdown();
 
     // Check that snapshot files were created
     let snapshot_count = system.check_snapshot_files();
-    
+
     assert!(
       snapshots_created || snapshot_count >= 1,
       "Expected at least 1 snapshot file, found {}",
       snapshot_count
     );
-    
+
     println!("Created {} snapshot files", snapshot_count);
-    
+
     // Clean up
     teardown_test_environment(&system);
   }
@@ -2740,7 +2740,7 @@ mod ultimate_tests {
   #[test]
   fn test_chaos_engineering_triggers_snapshots() {
     let system = setup_test_environment();
-    
+
     let trace_system = Arc::new(Trace::init(1000, 100));
     let chaos_engine = ChaosEngine::new(trace_system.clone());
 
@@ -2767,7 +2767,7 @@ mod ultimate_tests {
       .collect();
 
     assert!(!files.is_empty(), "Chaos scenario should create snapshot");
-    
+
     // Clean up
     teardown_test_environment(&system);
   }
@@ -2775,7 +2775,7 @@ mod ultimate_tests {
   #[test]
   fn test_high_throughput_message_processing() {
     let system = setup_test_environment();
-    
+
     let trace_system = Arc::new(Trace::init(10000, 1000));
 
     // Send many messages rapidly
@@ -2796,7 +2796,7 @@ mod ultimate_tests {
 
     // Test passed if no panics occurred
     assert!(true);
-    
+
     // Clean up
     teardown_test_environment(&system);
   }

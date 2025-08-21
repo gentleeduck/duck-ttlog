@@ -10,8 +10,10 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+serde_json.workspace = true
 # Tracing ecosystem
 tracing = { workspace = true }
 
 # Internal dependencies
 ttlog = { path = "../../ttlog" }
+uuid = { version = "1.18.0" , features = ["v4"] }

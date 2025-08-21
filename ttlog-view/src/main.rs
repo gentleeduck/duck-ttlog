@@ -111,13 +111,17 @@
 use ttlog::{
   event::LogLevel,
   trace::{self},
-  ttlog_macros::{error, info, trace},
+  ttlog_macros::{info, trace},
 };
 
-fn main() {
-  let trace = trace::Trace::init(10_000, 10_000, "gentleduck");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+  let trace = trace::Trace::init(10_000, 10_000, "gentleduck", Some("./tmp/"));
   trace.set_level(LogLevel::ERROR);
   println!("{:?}", trace.get_level());
 
   info!("Just a simple log line");
+
+  trace!(user_id = 42, success = true, "User logged in");
+
+  Ok(())
 }

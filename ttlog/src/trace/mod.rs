@@ -175,10 +175,11 @@ impl Trace {
     &self,
     log_level: u8,
     target_id: u16,
-    message_id: u16,
+    message_id: Option<u16>,
     thread_id: u8,
     file_id: u16,
     position: (u32, u32),
+    kv_id: Option<u16>,
   ) {
     // Fast level check first
     if log_level > self.level.load(Ordering::Relaxed) {
@@ -203,6 +204,7 @@ impl Trace {
       message_id,
       position,
       file_id,
+      kv_id,
       _padding: [0; 9],
     };
 
@@ -248,7 +250,9 @@ impl Trace {
             );
 
             if !snapshot_buffer.is_empty() {
-              if let Err(e) = service.snapshot_and_write(&mut snapshot_buffer, reason) {
+              if let Err(e) =
+                service.snapshot_and_write(&mut snapshot_buffer, reason, interner.clone())
+              {
                 eprintln!("[Snapshot] failed: {}", e);
               } else {
                 eprintln!("[Snapshot] completed successfully");
@@ -276,7 +280,7 @@ impl Trace {
 
             // Final snapshot with remaining events
             if !snapshot_buffer.is_empty() {
-              let _ = service.snapshot_and_write(&mut snapshot_buffer, "flush_and_exit");
+              let _ = service.snapshot_and_write(&mut snapshot_buffer, "flush_and_exit", interner);
             }
 
             eprintln!("[Trace] Writer thread shutting down");
@@ -330,7 +334,8 @@ impl Trace {
           "[Snapshot] Periodic snapshot triggered ({} events)",
           snapshot_buffer.len()
         );
-        let _result = service.snapshot_and_write(&mut snapshot_buffer, "periodic");
+        let _result =
+          service.snapshot_and_write(&mut snapshot_buffer, "periodic", interner.clone());
         last_periodic = Instant::now();
       }
 

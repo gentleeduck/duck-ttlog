@@ -32,3 +32,4 @@ ttlog = { path = "../ttlog" }
 
 # Development and testing
 criterion = { workspace = true }
+serde_json.workspace = true

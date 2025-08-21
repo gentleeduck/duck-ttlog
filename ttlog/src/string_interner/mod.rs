@@ -9,23 +9,27 @@ use std::{
 
 #[derive(Debug)]
 struct LocalCache {
-  target_cache: [(u64, u16); 16],
-  message_cache: [(u64, u16); 16],
-  file_cache: [(u64, u16); 16],
+  target_cache: [(u64, u16); 32],
+  message_cache: [(u64, u16); 32],
+  file_cache: [(u64, u16); 32],
+  kv_cache: [(u64, u16); 32],
   target_counter: u8,
   message_counter: u8,
   file_counter: u8,
+  kv_counter: u8,
 }
 
 impl LocalCache {
   fn new() -> Self {
     Self {
-      target_cache: [(0, 0); 16],
-      message_cache: [(0, 0); 16],
-      file_cache: [(0, 0); 16],
+      target_cache: [(0, 0); 32],
+      message_cache: [(0, 0); 32],
+      file_cache: [(0, 0); 32],
+      kv_cache: [(0, 0); 32],
       target_counter: 0,
       message_counter: 0,
       file_counter: 0,
+      kv_counter: 0,
     }
   }
 
@@ -70,6 +74,20 @@ impl LocalCache {
     self.file_cache[idx] = (hash, id);
     self.file_counter = self.file_counter.wrapping_add(1);
   }
+
+  fn get_kv(&self, hash: u64) -> Option<u16> {
+    self
+      .kv_cache
+      .iter()
+      .find(|(h, _)| *h == hash)
+      .map(|(_, id)| *id)
+  }
+
+  fn put_kv(&mut self, hash: u64, id: u16) {
+    let idx = self.kv_counter as usize % 8;
+    self.kv_cache[idx] = (hash, id);
+    self.kv_counter = self.kv_counter.wrapping_add(1);
+  }
 }
 
 thread_local! {
@@ -80,17 +98,18 @@ thread_local! {
 pub struct StringInterner {
   targets: RwLock<Vec<Arc<str>>>,
   messages: RwLock<Vec<Arc<str>>>,
-  fields: RwLock<Vec<Arc<str>>>,
   files: RwLock<Vec<Arc<str>>>,
+  kvs: RwLock<Vec<Arc<str>>>,
 
   target_lookup: RwLock<HashMap<u64, u16>>,
   message_lookup: RwLock<HashMap<u64, u16>>,
   file_lookup: RwLock<HashMap<u64, u16>>,
+  kv_lookup: RwLock<HashMap<u64, u16>>,
 
   target_count: AtomicU16,
   message_count: AtomicU16,
-  field_count: AtomicU16,
   file_count: AtomicU16,
+  kv_count: AtomicU16,
 }
 
 impl StringInterner {
@@ -98,14 +117,15 @@ impl StringInterner {
     Self {
       targets: RwLock::new(Vec::with_capacity(256)),
       messages: RwLock::new(Vec::with_capacity(4096)),
-      fields: RwLock::new(Vec::with_capacity(512)),
+      kvs: RwLock::new(Vec::with_capacity(512)),
       files: RwLock::new(Vec::with_capacity(512)),
       target_lookup: RwLock::new(HashMap::with_capacity(256)),
       message_lookup: RwLock::new(HashMap::with_capacity(4096)),
       file_lookup: RwLock::new(HashMap::with_capacity(512)),
+      kv_lookup: RwLock::new(HashMap::with_capacity(512)),
       target_count: AtomicU16::new(0),
       message_count: AtomicU16::new(0),
-      field_count: AtomicU16::new(0),
+      kv_count: AtomicU16::new(0),
       file_count: AtomicU16::new(0),
     }
   }
@@ -188,6 +208,28 @@ impl StringInterner {
     })
   }
 
+  #[inline]
+  pub fn intern_kv(&self, string: &str) -> u16 {
+    let hash = self.fast_hash(string);
+
+    LOCAL_CACHE.with(|cache| {
+      let cache_ptr = cache.get();
+      unsafe {
+        if let Some(id) = (*cache_ptr).get_kv(hash) {
+          return id;
+        }
+      }
+
+      let id = self.intern_string_slow(string, &self.kvs, &self.kv_lookup, &self.kv_count);
+
+      unsafe {
+        (*cache_ptr).put_kv(hash, id);
+      }
+
+      id
+    })
+  }
+
   #[cold]
   fn intern_string_slow(
     &self,
@@ -237,15 +279,15 @@ impl StringInterner {
     self.messages.read().unwrap().get(id as usize).cloned()
   }
 
-  pub fn get_field(&self, id: u16) -> Option<Arc<str>> {
-    self.fields.read().unwrap().get(id as usize).cloned()
+  pub fn get_kv(&self, id: u16) -> Option<Arc<str>> {
+    self.kvs.read().unwrap().get(id as usize).cloned()
   }
 
   pub fn stats(&self) -> (usize, usize, usize) {
     (
       self.target_count.load(Ordering::Relaxed) as usize,
       self.message_count.load(Ordering::Relaxed) as usize,
-      self.field_count.load(Ordering::Relaxed) as usize,
+      self.kv_count.load(Ordering::Relaxed) as usize,
     )
   }
 

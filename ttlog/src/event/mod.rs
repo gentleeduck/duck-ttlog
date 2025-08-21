@@ -75,7 +75,8 @@ impl Field {
 pub struct LogEvent {
   pub packed_meta: u64,
   pub target_id: u16,
-  pub message_id: u16,
+  pub message_id: Option<u16>,
+  pub kv_id: Option<u16>,
   pub file_id: u16,
   pub position: (u32, u32),
   pub _padding: [u8; 9],
@@ -113,7 +114,8 @@ impl LogEvent {
     Self {
       packed_meta: 0,
       target_id: 0,
-      message_id: 0,
+      message_id: Some(0),
+      kv_id: Some(0),
       file_id: 0,
       position: (0, 0),
       _padding: [0; 9],
@@ -124,7 +126,8 @@ impl LogEvent {
   pub fn reset(&mut self) {
     self.packed_meta = 0;
     self.target_id = 0;
-    self.message_id = 0;
+    self.message_id = Some(0);
+    self.kv_id = Some(0);
     self.file_id = 0;
     self.position = (0, 0);
     // Note: fields array is not cleared for performance -
@@ -140,17 +143,7 @@ impl LogEvent {
   }
 }
 
-impl fmt::Display for LogEvent {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(
-      f,
-      "Event(target_id={}, message_id={})",
-      self.target_id, self.message_id
-    )
-  }
-}
-
 const _: () = {
-  assert!(std::mem::size_of::<LogEvent>() == 32);
+  assert!(std::mem::size_of::<LogEvent>() == 40);
   assert!(std::mem::align_of::<LogEvent>() >= 8);
 };

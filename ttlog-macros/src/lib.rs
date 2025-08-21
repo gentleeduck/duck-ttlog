@@ -72,7 +72,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+                logger.send_event_fast(LEVEL, target_id, Some(message_id), #thread_id_expr, file_id, POSITION, None);
               }
             }
           });
@@ -82,20 +82,14 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
     // Case 2: Message with key-values - OPTIMIZED PATH
     (Some(message), false) => {
-      // Pre-build format string at compile time
-      let format_parts: Vec<String> = parsed
+      let kv_keys: Vec<String> = parsed
         .kvs
         .iter()
-        .map(|(k, _)| format!("{}={{:?}}", k))
+        .map(|(k, _)| k.to_string())
         .collect();
-      let format_str = if format_parts.is_empty() {
-        message.value().to_string()
-      } else {
-        format!("{} {}", message.value(), format_parts.join(" "))
-      };
-
+    
       let kv_values = parsed.kvs.iter().map(|(_, v)| v);
-
+    
       quote! {
         {
           const LEVEL: u8 = #level;
@@ -103,22 +97,38 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           const MODULE: &'static str = module_path!();
           const FILE: &'static str = file!();
           const POSITION: (u32, u32) = (line!(), column!());
-
-          // Static caching - these are computed only once per call site
+    
           static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
           static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-
+          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {
               if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
                 let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
-                // Format only when needed, intern immediately
-                let formatted = format!(#format_str, #(#kv_values),*);
-                let message_id = logger.interner.intern_message(&formatted);
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
-
-                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+    
+                // Build structured map
+                let mut kv_map = std::collections::HashMap::<&'static str, String>::new();
+                #(
+                  kv_map.insert(#kv_keys, format!("{}", #kv_values));
+                )*
+                // Turn into JSON for storage
+                let json_str = serde_json::to_string(&kv_map).unwrap();
+    
+                let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
+                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(json_str.as_str()));
+    
+                logger.send_event_fast(
+                  LEVEL,
+                  target_id,
+                  Some(message_id),
+                  #thread_id_expr,
+                  file_id,
+                  POSITION,
+                  Some(kv_id),
+                );
               }
             }
           });
@@ -126,14 +136,16 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
       }
     },
 
+
+
     // Case 3: No message, only key-values - COMPACT PATH
     (None, false) => {
-      let format_parts: Vec<String> = parsed
+      let kv_keys: Vec<String> = parsed
         .kvs
         .iter()
-        .map(|(k, _)| format!("{}={{:?}}", k))
+        .map(|(k, _)| k.to_string())
         .collect();
-      let format_str = format_parts.join(" ");
+    
       let kv_values = parsed.kvs.iter().map(|(_, v)| v);
 
       quote! {
@@ -144,18 +156,25 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           const POSITION: (u32, u32) = (line!(), column!());
 
           static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
           static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {
               if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+                // Build structured map
+                let mut kv_map = std::collections::HashMap::<&'static str, String>::new();
+                #(
+                  kv_map.insert(#kv_keys, format!("{}", #kv_values));
+                )*
+                // Turn into JSON for storage
+                let json_str = serde_json::to_string(&kv_map).unwrap();
+    
+                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(json_str.as_str()));
                 let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
-                let formatted = format!(#format_str, #(#kv_values),*);
-                let message_id = logger.interner.intern_message(&formatted);
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+                logger.send_event_fast(LEVEL, target_id, None, #thread_id_expr, file_id, POSITION, Some(kv_id));
               }
             }
           });
@@ -183,7 +202,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(""));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-                logger.send_event_fast(LEVEL, target_id, message_id, #thread_id_expr, file_id, POSITION);
+                logger.send_event_fast(LEVEL, target_id, Some(message_id), #thread_id_expr, file_id, POSITION, None);
               }
             }
           });
