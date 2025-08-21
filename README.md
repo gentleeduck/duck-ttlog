@@ -1,13 +1,14 @@
+```rust
 # TTLog - Ultra-High-Performance Structured Logging
 
-<p align="center">
-  <img src="./public/logo.png" alt="TTLog Logo" width="500"/>
+    <p align="center">
+    <img src="./public/logo.png" alt="TTLog Logo" width="500"/>
 </p>
 
 [![Crates.io](https://img.shields.io/crates/v/ttlog)](https://crates.io/crates/ttlog)
-[![Documentation](https://docs.rs/ttlog/badge.svg)](https://docs.rs/ttlog)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust Version](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
+    [![Documentation](https://docs.rs/ttlog/badge.svg)](https://docs.rs/ttlog)
+    [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+    [![Rust Version](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
 
 > **🚀 66+ Million Events/Second** • **Lock-Free** • **Zero-Copy** • **Crash-Safe**
 
@@ -64,13 +65,13 @@ TTLog is a blazingly fast, lock-free structured logging library designed for hig
 │  ttlog::event!  │     │ • Field Capping  │    │     Buffer      │    │ CBOR + LZ4 +    │
 │                 │     │ • String Intern  │    │ • 1M+ capacity  │    │ Atomic Write    │
 └─────────────────┘     └──────────────────┘    └─────────────────┘    └─────────────────┘
-                                ▲                        │                        │
-                                │                        ▼                        ▼
-                       ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-                       │ Static Interner │    │ Concurrent Ops  │    │  Compressed     │
-                       │ (Thread-Safe)   │    │ 66M events/sec  │    │  Log Files      │
-                       │                 │    │ 1024 threads    │    │ 136 bytes/event │
-                       └─────────────────┘    └─────────────────┘    └─────────────────┘
+▲                        │                        │
+│                        ▼                        ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│ Static Interner │    │ Concurrent Ops  │    │  Compressed     │
+│ (Thread-Safe)   │    │ 66M events/sec  │    │  Log Files      │
+│                 │    │ 1024 threads    │    │ 136 bytes/event │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
 ```
 
 ### **Data Flow Architecture**
@@ -80,32 +81,32 @@ Logging Call                  Event Processing                    Storage Pipeli
 ─────────────                 ───────────────────                 ─────────────────
 
 info!(                       ┌──────────────────────┐            ┌──────────────────┐
-  user_id = 123,             │   Macro Expansion    │            │  Snapshot Timer  │
-  action = "login"           │                      │            │   (60 seconds)   │
+user_id = 123,             │   Macro Expansion    │            │  Snapshot Timer  │
+action = "login"           │                      │            │   (60 seconds)   │
 );                   ──────▶│ • Level check (O(1)) │    ┌─────▶│                  │
-                             │ • Static caching     │    │       │ • Periodic flush │
-                             │ • Target/msg intern  │    │       │ • Panic trigger  │
-                             └──────────────────────┘    │       │ • Manual request │
-                                       │                 │       └──────────────────┘
-                                       ▼                 │               │
-                             ┌─────────────────────┐     │               ▼
+│ • Static caching     │    │       │ • Periodic flush │
+│ • Target/msg intern  │    │       │ • Panic trigger  │
+└──────────────────────┘    │       │ • Manual request │
+│                 │       └──────────────────┘
+▼                 │               │
+┌─────────────────────┐     │               ▼
 Thread 1: Producer           │   Event Creation    │     │     ┌──────────────────┐
 Thread 2: Producer    ────▶ │                     │     │     │  Writer Thread   │
 Thread N: Producer           │ • Pack metadata     │     │     │                  │
-                             │ • Assign thread_id  │     │     │ • CBOR serialize │
-                             │ • Add structured    │ ────┘     │ • LZ4 compress   │
-                             │   fields (max 3)    │           │ • Atomic write   │
-                             └─────────────────────┘           │ • File rotation  │
-                                       │                       └──────────────────┘
-                                       ▼                                   │
-                             ┌─────────────────────┐                      ▼
-                             │  Lock-Free Buffer   │             ┌─────────────────┐
-                             │                     │             │   Disk Storage  │
-                             │ • Ring buffer       │             │                 │
-                             │ • Overwrite oldest  │             │ /tmp/ttlog-     │
-                             │ • Zero-copy push    │             │  {pid}-{time}-  │
-                             │ • Concurrent reads  │             │  {reason}.bin   │
-                             └─────────────────────┘             └─────────────────┘
+│ • Assign thread_id  │     │     │ • CBOR serialize │
+│ • Add structured    │ ────┘     │ • LZ4 compress   │
+│   fields (max 3)    │           │ • Atomic write   │
+└─────────────────────┘           │ • File rotation  │
+│                       └──────────────────┘
+▼                                   │
+┌─────────────────────┐                      ▼
+│  Lock-Free Buffer   │             ┌─────────────────┐
+│                     │             │   Disk Storage  │
+│ • Ring buffer       │             │                 │
+│ • Overwrite oldest  │             │ /tmp/ttlog-     │
+│ • Zero-copy push    │             │  {pid}-{time}-  │
+│ • Concurrent reads  │             │  {reason}.bin   │
+└─────────────────────┘             └─────────────────┘
 ```
 
 ### **Performance Characteristics**
@@ -136,8 +137,8 @@ Main Thread              Writer Thread             Storage Thread
 │ • Fast path │          │ • Bounded   │           │ • LZ4 comp  │
 │ • Non-block │          │ • Lock-free │           │ • Atomic IO │
 └─────────────┘          └─────────────┘           └─────────────┘
-       │                        │
-       ▼                        ▼
+│                        │
+▼                        ▼
 ┌─────────────┐          ┌─────────────┐
 │Worker Thread│          │Panic Handler│
 │Pool (1-N)   │          │             │
@@ -168,10 +169,10 @@ ttlog/
 ├── ttlog-macros/       # Proc macros for convenient logging
 ├── ttlog-view/         # Viewer and analysis tool
 └── examples/           # Comprehensive usage examples
-    ├── ttlog-simple/   # Basic usage patterns
-    ├── ttlog-server/   # Server-side logging examples
-    ├── ttlog-complex/  # Async and distributed scenarios
-    └── ttlog-filereader/ # Snapshot reading examples
+├── ttlog-simple/   # Basic usage patterns
+├── ttlog-server/   # Server-side logging examples
+├── ttlog-complex/  # Async and distributed scenarios
+└── ttlog-filereader/ # Snapshot reading examples
 ```
 
 ## 📦 Installation
@@ -193,23 +194,23 @@ use ttlog::trace::Trace;
 use ttlog::ttlog_macros::{info, error};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  // Initialize with 100K event capacity
-  let _trace = Trace::init(100_000, 10_000, "my-service");
-  
-  // Log with structured data
-  info!("Server starting", port = 8080, env = "production");
-  
-  // Simulate some work
-  for i in 0..1000 {
-      if i % 100 == 0 {
-          info!("Processed batch", batch_id = i, items = 100);
-      }
-  }
-  
-  // Manual snapshot (optional)
-  // trace.request_snapshot("checkpoint");
-  
-  Ok(())
+    // Initialize with 100K event capacity
+    let _trace = Trace::init(100_000, 10_000, "my-service");
+
+    // Log with structured data
+    info!("Server starting", port = 8080, env = "production");
+
+    // Simulate some work
+    for i in 0..1000 {
+        if i % 100 == 0 {
+            info!("Processed batch", batch_id = i, items = 100);
+        }
+    }
+
+    // Manual snapshot (optional)
+    // trace.request_snapshot("checkpoint");
+
+    Ok(())
 }
 ```
 
@@ -223,12 +224,12 @@ use ttlog::trace::Trace;
 async fn main() {
     // Initialize TTLog
     let trace = Trace::init(1_000_000, 100_000, "async-service");
-    
+
     // Use standard tracing macros
     info!(user_id = 12345, action = "login", "User authenticated");
     warn!(connection_id = "conn_123", "Connection timeout");
     error!(error_code = 500, "Database connection failed");
-    
+
     // Your async application logic...
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 }
@@ -236,7 +237,6 @@ async fn main() {
 
 ### **Advanced Structured Logging**
 
-```rust
 use ttlog::ttlog_macros::{info, error};
 use ttlog::trace::Trace;
 

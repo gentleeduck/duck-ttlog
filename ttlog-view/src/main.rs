@@ -110,7 +110,7 @@
 
 use ttlog::{
   trace::{self},
-  ttlog_macros::info,
+  ttlog_macros::{info, trace},
 };
 
 fn main() {
@@ -119,5 +119,5 @@ fn main() {
 
   info!("Just a simple log line");
 
-  info!(user_id = 42, success = true, "User logged in");
+  // trace!(user_id = 42, success = true, "User logged in");
 }

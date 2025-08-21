@@ -69,7 +69,7 @@ pub struct LogEvent {
   pub field_count: u8,
   pub fields: [Field; 3],
   pub file_id: u16,
-  pub line: u16,
+  pub position: (u32, u32),
   pub _padding: [u8; 9],
 }
 
@@ -109,7 +109,7 @@ impl LogEvent {
       field_count: 0,
       fields: [Field::empty(); 3],
       file_id: 0,
-      line: 0,
+      position: (0, 0),
       _padding: [0; 9],
     }
   }
@@ -132,7 +132,7 @@ impl LogEvent {
     self.message_id = 0;
     self.field_count = 0;
     self.file_id = 0;
-    self.line = 0;
+    self.position = (0, 0);
     // Note: fields array is not cleared for performance -
     // it will be overwritten as field_count increases
   }

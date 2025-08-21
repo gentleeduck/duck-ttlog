@@ -9,23 +9,27 @@ use std::{
 
 #[derive(Debug)]
 struct LocalCache {
-  target_cache: [(u64, u16); 8],
+  target_cache: [(u64, u16); 16],
   message_cache: [(u64, u16); 16],
-  field_cache: [(u64, u16); 8],
+  field_cache: [(u64, u16); 16],
+  file_cache: [(u64, u16); 16],
   target_counter: u8,
   message_counter: u8,
   field_counter: u8,
+  file_counter: u8,
 }
 
 impl LocalCache {
   fn new() -> Self {
     Self {
-      target_cache: [(0, 0); 8],
+      target_cache: [(0, 0); 16],
       message_cache: [(0, 0); 16],
-      field_cache: [(0, 0); 8],
+      field_cache: [(0, 0); 16],
+      file_cache: [(0, 0); 16],
       target_counter: 0,
       message_counter: 0,
       field_counter: 0,
+      file_counter: 0,
     }
   }
 
@@ -51,6 +55,14 @@ impl LocalCache {
       .map(|(_, id)| *id)
   }
 
+  fn get_file(&self, hash: u64) -> Option<u16> {
+    self
+      .file_cache
+      .iter()
+      .find(|(h, _)| *h == hash)
+      .map(|(_, id)| *id)
+  }
+
   fn put_message(&mut self, hash: u64, id: u16) {
     let idx = self.message_counter as usize % 16;
     self.message_cache[idx] = (hash, id);
@@ -70,6 +82,12 @@ impl LocalCache {
     self.field_cache[idx] = (hash, id);
     self.field_counter = self.field_counter.wrapping_add(1);
   }
+
+  fn put_file(&mut self, hash: u64, id: u16) {
+    let idx = self.file_counter as usize % 8;
+    self.file_cache[idx] = (hash, id);
+    self.file_counter = self.file_counter.wrapping_add(1);
+  }
 }
 
 thread_local! {
@@ -81,14 +99,17 @@ pub struct StringInterner {
   targets: RwLock<Vec<Arc<str>>>,
   messages: RwLock<Vec<Arc<str>>>,
   fields: RwLock<Vec<Arc<str>>>,
+  files: RwLock<Vec<Arc<str>>>,
 
   target_lookup: RwLock<HashMap<u64, u16>>,
   message_lookup: RwLock<HashMap<u64, u16>>,
   field_lookup: RwLock<HashMap<u64, u16>>,
+  file_lookup: RwLock<HashMap<u64, u16>>,
 
   target_count: AtomicU16,
   message_count: AtomicU16,
   field_count: AtomicU16,
+  file_count: AtomicU16,
 }
 
 impl StringInterner {
@@ -97,12 +118,15 @@ impl StringInterner {
       targets: RwLock::new(Vec::with_capacity(256)),
       messages: RwLock::new(Vec::with_capacity(4096)),
       fields: RwLock::new(Vec::with_capacity(512)),
+      files: RwLock::new(Vec::with_capacity(512)),
       target_lookup: RwLock::new(HashMap::with_capacity(256)),
       message_lookup: RwLock::new(HashMap::with_capacity(4096)),
       field_lookup: RwLock::new(HashMap::with_capacity(512)),
+      file_lookup: RwLock::new(HashMap::with_capacity(512)),
       target_count: AtomicU16::new(0),
       message_count: AtomicU16::new(0),
       field_count: AtomicU16::new(0),
+      file_count: AtomicU16::new(0),
     }
   }
 
@@ -178,6 +202,28 @@ impl StringInterner {
 
       unsafe {
         (*cache_ptr).put_field(hash, id);
+      }
+
+      id
+    })
+  }
+
+  #[inline]
+  pub fn intern_file(&self, string: &str) -> u16 {
+    let hash = self.fast_hash(string);
+
+    LOCAL_CACHE.with(|cache| {
+      let cache_ptr = cache.get();
+      unsafe {
+        if let Some(id) = (*cache_ptr).get_file(hash) {
+          return id;
+        }
+      }
+
+      let id = self.intern_string_slow(string, &self.files, &self.file_lookup, &self.file_count);
+
+      unsafe {
+        (*cache_ptr).put_file(hash, id);
       }
 
       id
