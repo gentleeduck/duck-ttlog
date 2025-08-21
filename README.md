@@ -1,7 +1,6 @@
-```rust
 # TTLog - Ultra-High-Performance Structured Logging
 
-    <p align="center">
+<p align="center">
     <img src="./public/logo.png" alt="TTLog Logo" width="500"/>
 </p>
 
@@ -10,7 +9,7 @@
     [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
     [![Rust Version](https://img.shields.io/badge/rust-1.70+-blue.svg)](https://www.rust-lang.org)
 
-> **🚀 66+ Million Events/Second** • **Lock-Free** • **Zero-Copy** • **Crash-Safe**
+> **🚀 70+ Million Events/Second** • **Lock-Free** • **Zero-Copy** • **Crash-Safe**
 
 TTLog is a blazingly fast, lock-free structured logging library designed for high-throughput distributed systems. Built from the ground up for performance, it maintains in-memory ring buffers and creates compressed snapshots for post-mortem analysis.
 
