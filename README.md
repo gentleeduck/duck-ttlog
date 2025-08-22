@@ -271,7 +271,6 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 ttlog = "0.1.0"
-ttlog-macros = "0.1.0"  # For convenient logging macros
 ```
 
 ## 🚀 Quick Start

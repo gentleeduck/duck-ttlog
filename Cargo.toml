@@ -4,6 +4,7 @@ members = [
   "ttlog-view",
   "ttlog-macros",
   "ttlog-benches",
+  "ttlog-dashboard/src-tauri",
   "examples/ttlog-simple",
   "examples/ttlog-server", 
   "examples/ttlog-complex",

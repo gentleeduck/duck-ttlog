@@ -1,0 +1,115 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.1.4/schema.json",
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": "on",
+				"recommended": false
+			}
+		},
+		"enabled": true
+	},
+	"formatter": {
+		"attributePosition": "multiline",
+		"bracketSpacing": true,
+		"enabled": true,
+		"formatWithErrors": false,
+		"includes": [
+			"**",
+			"!**/node_modules/**",
+			"!**/dist/**",
+			"!**/website/**",
+			"!**/build/**",
+			"!**/public/**",
+			"!**/.*/**",
+			"!**/old_*/**",
+			"!**/_*/**",
+			"!packages/___/",
+			"./apps/docs/__ui_registry__/**",
+			"!packages/_oldstuff_refactor/",
+			"!packages/benchmark/",
+			"!packages/duck-orm-skitch/**"
+		],
+		"indentStyle": "space",
+		"indentWidth": 2,
+		"lineEnding": "lf",
+		"lineWidth": 120
+	},
+	"javascript": {
+		"formatter": {
+			"arrowParentheses": "always",
+			"attributePosition": "auto",
+			"bracketSameLine": true,
+			"bracketSpacing": true,
+			"jsxQuoteStyle": "double",
+			"quoteProperties": "asNeeded",
+			"quoteStyle": "single",
+			"semicolons": "asNeeded",
+			"trailingCommas": "all"
+		},
+		"globals": ["Global1"]
+	},
+	"linter": {
+		"enabled": true,
+		"includes": [
+			"**",
+			"!**/@*",
+			"!**/.*/**",
+			"!**/old_*/**",
+			"!**/_*/**",
+			"./apps/docs/__ui_registry__/**",
+			"!**/node_modules/**",
+			"!**/dist/**",
+			"!**/build/**",
+			"!**/test/**",
+			"!**/public/**",
+			"!apps/docs/**",
+			"!**/website/**",
+			"!apps/upload-api/**",
+			"!apps/www/**",
+			"!packages/___/**",
+			"!packages/_oldstuff_refactor/**",
+			"!packages/duck-state/**",
+			"!packages/duck-benchmark/**",
+			"!packages/registry-build-duckui/**",
+			"!**/duck-state/**",
+			"!packages/duck-ui/**",
+			"!packages/sandbox-server/**",
+			"!apps/benchmark/**",
+			"!**/upload/**",
+			"!**/table/**",
+			"!**/combobox.tsx"
+		],
+		"rules": {
+			"complexity": {},
+			"nursery": {
+				"useSortedClasses": {
+					"fix": "safe",
+					"level": "info",
+					"options": {
+						"attributes": ["className", "class"],
+						"functions": ["clsx", "cva", "tw", "twMerge", "cn", "twJoin", "tv"]
+					}
+				}
+			},
+			"recommended": false,
+			"style": {},
+			"suspicious": {
+				"noDoubleEquals": "error",
+				"noExplicitAny": "off",
+				"noThenProperty": "error",
+				"noVar": "error",
+				"useGetterReturn": "error",
+				"useIsArray": "error"
+			}
+		}
+	},
+	"overrides": [
+		{
+			"formatter": {
+				"indentWidth": 2
+			},
+			"includes": ["**/*.json"]
+		}
+	]
+}
