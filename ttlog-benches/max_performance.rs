@@ -455,10 +455,6 @@ impl MemoryEfficiencyTester {
       // Calculate more accurate memory usage per event
       for event in &events {
         let mut event_memory = std::mem::size_of::<LogEvent>();
-
-        // Add message overhead (strings are interned, so minimal per-event cost)
-        event_memory += 32; // Estimated overhead for interned strings and metadata
-
         total_calculated_memory += event_memory;
       }
 
