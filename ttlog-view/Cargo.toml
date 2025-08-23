@@ -33,7 +33,7 @@ ttlog = { path = "../ttlog" }
 # Development and testing
 criterion = { workspace = true }
 serde_json = { workspace = true }
-# color-eyre = "0.6.3"
-# crossterm = "0.28.1"
-# ratatui = { version = "0.28", features = ["crossterm"] }
+color-eyre = "0.6.3"
+crossterm = "0.28.1"
+ratatui = { version = "0.28", features = ["crossterm"] }
 

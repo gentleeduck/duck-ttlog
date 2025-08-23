@@ -12,7 +12,7 @@ fn main() {
   println!("=====================");
 
   // Run all examples
-  example_simple::sync_registry_across_network();
+  example_simple::example_simple();
   // example_basic_logging();
   // example_structured_logging();
   // example_high_volume_logging();

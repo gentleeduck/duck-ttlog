@@ -13,7 +13,7 @@ use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
 use crate::string_interner::StringInterner;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Snapshot {
+pub struct SnapShot {
   pub service: String,
   pub hostname: String,
   pub pid: u32,
@@ -51,7 +51,7 @@ impl SnapshotWriter {
     ring: &mut Arc<RingBuffer<LogEvent>>,
     reason: impl Into<String>,
     interner: Arc<StringInterner>,
-  ) -> Option<Snapshot> {
+  ) -> Option<SnapShot> {
     let events: Vec<ResolvedEvent> = ring
       .take_snapshot()
       .iter()
@@ -106,7 +106,7 @@ impl SnapshotWriter {
     let pid = std::process::id();
     let created_at = Utc::now().format("%Y%m%d%H%M%S").to_string();
 
-    Some(Snapshot {
+    Some(SnapShot {
       service: self.service.to_string(),
       hostname,
       pid,
@@ -116,7 +116,7 @@ impl SnapshotWriter {
     })
   }
 
-  pub fn write_snapshot(&self, snapshot: &Snapshot) -> Result<(), Box<dyn std::error::Error>> {
+  pub fn write_snapshot(&self, snapshot: &SnapShot) -> Result<(), Box<dyn std::error::Error>> {
     // Serialize CBOR
     let cbor_buff = serde_cbor::to_vec(&snapshot)?;
     // Compress

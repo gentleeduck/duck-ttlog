@@ -537,7 +537,7 @@ fn bench_extreme_serialization(c: &mut Criterion) {
         b.iter(|| {
           let events: Vec<LogEvent> = (0..event_count).map(|i| create_heavy_event(0, i)).collect();
 
-          let snapshot = ttlog::snapshot::Snapshot {
+          let snapshot = ttlog::snapshot::SnapShot {
             service: "extreme-bench".to_string(),
             hostname: "test-host".to_string(),
             pid: std::process::id(),
@@ -562,7 +562,7 @@ fn bench_extreme_serialization(c: &mut Criterion) {
         b.iter(|| {
           let events: Vec<LogEvent> = (0..event_count).map(|i| create_heavy_event(0, i)).collect();
 
-          let snapshot = ttlog::snapshot::Snapshot {
+          let snapshot = ttlog::snapshot::SnapShot {
             service: "extreme-bench".to_string(),
             hostname: "test-host".to_string(),
             pid: std::process::id(),

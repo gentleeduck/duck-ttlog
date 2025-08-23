@@ -4,7 +4,7 @@ mod __test__ {
   use crate::event::{FieldValue, LogEvent, LogLevel};
   use crate::event_builder::EventBuilder;
   use crate::lf_buffer::LockFreeRingBuffer;
-  use crate::snapshot::{Snapshot, SnapshotWriter};
+  use crate::snapshot::{SnapShot, SnapshotWriter};
   use crate::string_interner::StringInterner;
   use std::sync::Arc;
 
@@ -59,7 +59,7 @@ mod __test__ {
 
   #[test]
   fn test_snapshot_serialization() {
-    let snapshot = Snapshot {
+    let snapshot = SnapShot {
       service: "test_service".to_string(),
       hostname: "test_host".to_string(),
       pid: 12345,
@@ -70,7 +70,7 @@ mod __test__ {
 
     // Test JSON serialization
     let json = serde_json::to_string(&snapshot).expect("Failed to serialize");
-    let deserialized: Snapshot = serde_json::from_str(&json).expect("Failed to deserialize");
+    let deserialized: SnapShot = serde_json::from_str(&json).expect("Failed to deserialize");
 
     assert_eq!(deserialized.service, snapshot.service);
     assert_eq!(deserialized.hostname, snapshot.hostname);
@@ -114,7 +114,7 @@ mod __test__ {
 
   #[test]
   fn test_snapshot_clone() {
-    let original = Snapshot {
+    let original = SnapShot {
       service: "clone_test".to_string(),
       hostname: "host1".to_string(),
       pid: 999,
@@ -135,7 +135,7 @@ mod __test__ {
 
   #[test]
   fn test_snapshot_debug_format() {
-    let snapshot = Snapshot {
+    let snapshot = SnapShot {
       service: "debug_test".to_string(),
       hostname: "debug_host".to_string(),
       pid: 777,

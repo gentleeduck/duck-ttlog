@@ -26,6 +26,17 @@ impl LogLevel {
     }
   }
 
+  pub fn from_u8_to_str(level: &u8) -> &'static str {
+    match level {
+      0 => "TRACE",
+      1 => "DEBUG",
+      2 => "INFO",
+      3 => "WARN",
+      4 => "ERROR",
+      _ => "INFO",
+    }
+  }
+
   pub fn as_str(&self) -> &'static str {
     match self {
       Self::TRACE => "TRACE",
