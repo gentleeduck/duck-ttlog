@@ -108,20 +108,26 @@
 //   Ok(())
 // }
 
+use std::{thread, time::Duration};
+
 use ttlog::{
   event::LogLevel,
+  signal_hook::SignalHook,
   trace::{self},
   ttlog_macros::{info, trace},
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
   let trace = trace::Trace::init(10_000, 10_000, "gentleduck", Some("./tmp/"));
+  SignalHook::install(trace.sender.clone());
   trace.set_level(LogLevel::ERROR);
   println!("{:?}", trace.get_level());
 
   info!("Just a simple log line");
 
   trace!(user_id = 42, success = true, "User logged in");
+
+  println!("App running... press Ctrl+C to stop.");
 
   Ok(())
 }

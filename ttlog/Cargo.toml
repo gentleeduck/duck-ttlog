@@ -18,18 +18,14 @@ smallvec = { workspace = true }
 chrono = { workspace = true }
 lz4 = { workspace = true }
 gethostname = { workspace = true }
-
-# Async and concurrency
-crossbeam-channel = { workspace = true }
+crossbeam-channel.workspace = true
 crossbeam-queue = { workspace = true }
 ttlog-macros = { path = "../ttlog-macros" }
+signal-hook = "0.3.18"
 
 [dev-dependencies]
-# Async and concurrency
-crossbeam-epoch = { workspace = true }
 # System utilities
 tempfile = { workspace = true }
-criterion = { workspace = true }
 tabled = { workspace = true }
 
 
