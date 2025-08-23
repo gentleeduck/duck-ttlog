@@ -5,8 +5,6 @@ use figlet_rs::FIGfont;
 use tracing::Event;
 use ttlog::event::{LogEvent, LogLevel};
 
-use crate::snapshot_read::SnapshotFile;
-
 use chrono::{Datelike, NaiveDateTime, Timelike};
 
 pub fn format_timestamp(ts_str: &str) -> String {

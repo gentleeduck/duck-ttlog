@@ -1,109 +1,91 @@
-mod snapshot_read;
-mod utils;
+mod app;
+mod main_widget;
+mod monotring;
+mod stats_widget;
+mod tabs_widget;
+mod times;
+mod widget;
 
-use crate::snapshot_read::SnapshotFile;
-use crate::utils::{generate_ascii_art, print_snapshots};
-use colored::*;
-use inquire::Select;
-use std::error::Error;
-use std::fs;
+use ratatui::{
+  crossterm::event::{self, Event, KeyCode},
+  layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+  style::{Color, Style},
+  symbols::line::ROUNDED,
+  text::{Line, Span, Text},
+  widgets::{Block, BorderType, Borders, Paragraph},
+  Frame,
+};
 
-fn main() -> Result<(), Box<dyn Error>> {
-  // Clear screen
-  print!("\x1B[2J\x1B[1;1H");
+use crate::{
+  main_widget::MainWidget, stats_widget::StatsWidget, tabs_widget::ListWidget, widget::Widget,
+};
 
-  // ASCII banner
-  let banner = generate_ascii_art("TTLOG")?;
-  println!("{}", banner.bright_yellow().bold());
+fn main() -> color_eyre::Result<()> {
+  color_eyre::install()?;
+  let terminal = ratatui::init();
+  let result = app_run(terminal);
+  ratatui::restore();
+  result
+}
+
+fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
+  let mut main = MainWidget::new();
+  let mut list = ListWidget::new();
+  let mut stats = StatsWidget::new();
 
   loop {
-    // Main menu
-    let choice = Select::new(
-      "Main Menu - Select an action:",
-      vec!["Show All Files", "Preview All Files", "Exit"],
-    )
-    .prompt()?;
+    terminal.draw(|f| reader_ui(f, &mut main, &mut list, &mut stats))?;
 
-    match choice {
-      "Show All Files" => show_all_files_menu()?,
-      "Preview All Files" => preview_all_files()?,
-      "Exit" => {
-        println!("{}", "Goodbye!".red().bold());
-        break;
-      },
-      _ => unreachable!(),
+    if event::poll(std::time::Duration::from_millis(100))? {
+      match event::read()? {
+        // Global checking for q pressing to quite.
+        Event::Key(k) => {
+          list.on_key(k);
+          stats.on_key(k);
+        },
+        Event::Mouse(m) => {
+          list.on_mouse(m);
+          stats.on_mouse(m);
+        },
+        _ => {},
+      }
     }
   }
-
-  Ok(())
 }
 
-fn show_all_files_menu() -> Result<(), Box<dyn Error>> {
-  let files = snapshot_read::read_snapshots()?;
-  if files.is_empty() {
-    println!("{}", "No log files found.".red());
-    return Ok(());
-  }
+pub fn reader_ui(
+  f: &mut Frame<'_>,
+  main: &mut MainWidget,
+  list: &mut ListWidget,
+  stats: &mut StatsWidget,
+) {
+  let area = f.area();
 
-  loop {
-    let mut options: Vec<String> = files
-      .iter()
-      .map(|f| f.name.clone()) // Convert PathBuf to String
-      .collect();
+  let mut b = Block::default()
+    .title("") // we’ll render custom title manually
+    .borders(Borders::ALL)
+    .border_type(BorderType::Rounded)
+    .border_style(Style::default().fg(Color::White));
 
-    options.push("Back".to_string());
+  // Inner content (after borders)
+  let inner_area = area.inner(Margin {
+    vertical: 1,
+    horizontal: 1,
+  });
 
-    let choice = Select::new("Select a file to manage:", options).prompt()?;
+  // Split vertically: header (3 rows) + content (rest)
+  let chunks = Layout::default()
+    .direction(Direction::Vertical)
+    .constraints([Constraint::Length(3), Constraint::Min(0)])
+    .split(inner_area);
 
-    if choice == "Back" {
-      break;
-    }
+  let first_layer = Layout::default()
+    .direction(Direction::Horizontal)
+    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+    .split(chunks[0]);
 
-    file_action_menu(&choice, &files)?;
-  }
-
-  Ok(())
-}
-
-fn file_action_menu(file: &str, snapshots: &Vec<SnapshotFile>) -> Result<(), Box<dyn Error>> {
-  loop {
-    match Select::new(
-      &format!("File: {} - Choose an action:", file),
-      vec!["Preview", "Delete", "Back"],
-    )
-    .prompt()?
-    {
-      "Preview" => preview_file(file, snapshots)?,
-      "Delete" => {
-        fs::remove_file(format!("/tmp/{}.bin", file))?;
-        println!("{}", format!("Deleted file: {}", file).red());
-        break; // exit after deletion
-      },
-      "Back" => break,
-      _ => unreachable!(),
-    }
-  }
-  Ok(())
-}
-
-fn preview_file(file: &str, snapshots: &Vec<SnapshotFile>) -> Result<(), Box<dyn Error>> {
-  // Find snapshot by path
-  if let Some(snapshot) = snapshots.iter().find(|s| s.name == file) {
-    println!("=== Preview: {} ===", snapshot.name);
-
-    // Instead of raw debug output, reuse your old rendering logic
-    print_snapshots(&vec![snapshot.clone()]);
-    // Or if you had a function like render_snapshot(snapshot), call that:
-    // render_snapshot(snapshot);
-  } else {
-    println!("File '{}' not found in snapshots.", file);
-  }
-
-  Ok(())
-}
-
-fn preview_all_files() -> Result<(), Box<dyn Error>> {
-  let snapshots = snapshot_read::read_snapshots()?;
-  print_snapshots(&snapshots);
-  Ok(())
+  main.render(f, &b, area);
+  // Render list in the second chunk (main content)
+  list.render(f, &mut b, first_layer[0], true);
+  stats.render(f, &mut b, first_layer[1], false);
 }
