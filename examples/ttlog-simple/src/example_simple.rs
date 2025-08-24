@@ -28,7 +28,7 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
     const MODULE: &'static str = module_path!();
     const FILE: &'static str = file!();
     const POSITION: (u32, u32) = (line!(), column!());
-    const NUM_VALUES: usize = 1usize;
+    const NUM_VALUES: usize = 2usize;
     static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
     static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
     static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
@@ -54,27 +54,39 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
               Ok(())
             }
           }
+          struct IntOrSer<'a, T>(&'a T);
+
+          impl<'a, T> serde::Serialize for IntOrSer<'a, T>
+          where
+            T: serde::Serialize + 'static,
+          {
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+              S: serde::Serializer,
+            {
+              if let Some(i) = (self.0 as &dyn std::any::Any).downcast_ref::<i64>() {
+                let mut buf = itoa::Buffer::new();
+                return serializer.serialize_str(buf.format(*i));
+              }
+              if let Some(u) = (self.0 as &dyn std::any::Any).downcast_ref::<u64>() {
+                let mut buf = itoa::Buffer::new();
+                return serializer.serialize_str(buf.format(*u));
+              }
+              self.0.serialize(serializer)
+            }
+          }
           let mut buf = SmallVec::with_capacity(128);
           {
             use serde::ser::{SerializeMap, Serializer};
             let mut ser = serde_json::Serializer::new(&mut buf);
             let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
-            let mut id_buf = itoa::Buffer::new();
             {
-              map
-                .serialize_entry(&username, &{
-                  if let syn::Expr::Lit(expr_lit) = username {
-                    match &expr_lit.lit {
-                      syn::Lit::Str(_) => println!("This is a string literal"),
-                      syn::Lit::Int(_) => println!("This is an integer literal"),
-                      syn::Lit::Float(_) => println!("This is a float literal"),
-                      _ => println!("Other literal"),
-                    }
-                  } else {
-                    println!("Not a literal at all");
-                  }
-                })
-                .unwrap()
+              let wrapper = IntOrSer(&user_id);
+              map.serialize_entry(&user_id, &wrapper).unwrap();
+            }
+            {
+              let wrapper = IntOrSer(&username);
+              map.serialize_entry(&username, &wrapper).unwrap();
             }
             map.end().unwrap();
           }

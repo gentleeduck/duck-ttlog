@@ -1687,6 +1687,8 @@ name = "ttlog-simple"
 version = "0.1.0"
 dependencies = [
  "itoa",
+ "proc-macro2",
+ "quote",
  "serde",
  "serde_json",
  "smallvec",

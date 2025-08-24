@@ -11,6 +11,8 @@ categories.workspace = true
 
 [dependencies]
 itoa = "1.0.15"
+proc-macro2.workspace = true
+quote.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true

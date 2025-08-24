@@ -130,27 +130,42 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                     Ok(())
                   }
                 }
+
+
+                struct IntOrSer<'a, T>(&'a T);
+                
+                impl<'a, T> serde::Serialize for IntOrSer<'a, T>
+                where
+                  T: serde::Serialize + 'static,
+                {
+                  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+                  where
+                    S: serde::Serializer,
+                  {
+                    if let Some(i) = (self.0 as &dyn std::any::Any).downcast_ref::<i64>() {
+                      let mut buf = itoa::Buffer::new();
+                      return serializer.serialize_str(buf.format(*i));
+                    }
+                
+                    if let Some(u) = (self.0 as &dyn std::any::Any).downcast_ref::<u64>() {
+                      let mut buf = itoa::Buffer::new();
+                      return serializer.serialize_str(buf.format(*u));
+                    }
+                
+                    self.0.serialize(serializer)
+                  }
+                }
+
                 let mut buf = SmallVec::with_capacity(128);
                 {
                   use serde::ser::{SerializeMap, Serializer}; // <-- import the trait!
                   let mut ser = serde_json::Serializer::new(&mut buf);
                   // This gives you something that implements SerializeMap
                   let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
-                  let mut id_buf = itoa::Buffer::new();
-                  #({map.serialize_entry(&#kv_keys, &{
-
-                    if let syn::Expr::Lit(expr_lit) = #kv_values {
-                      match &expr_lit.lit {
-                          syn::Lit::Str(_) => println!("This is a string literal"),
-                          syn::Lit::Int(_) => println!("This is an integer literal"),
-                          syn::Lit::Float(_) => println!("This is a float literal"),
-                          _ => println!("Other literal"),
-                      }
-                    } else {
-                     println!("Not a literal at all");
-                    }
-
-                  }).unwrap()})*
+                  #({
+                    let wrapper = IntOrSer(&#kv_values);
+                    map.serialize_entry(&#kv_keys, &wrapper).unwrap();
+                  })*
 
                   map.end().unwrap();
                 }
@@ -173,8 +188,6 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
         }
       }
     },
-
-
 
     // Case 3: No message, only key-values - COMPACT PATH
     (None, false) => {
