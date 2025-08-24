@@ -94,7 +94,6 @@ impl SnapshotWriter {
       })
       .collect();
 
-    println!("[Snapshot] {:#?} events", events);
     if events.is_empty() {
       return None;
     }

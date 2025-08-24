@@ -90,7 +90,6 @@ pub struct LogEvent {
   pub kv_id: Option<u16>,
   pub file_id: u16,
   pub position: (u32, u32),
-  pub _padding: [u8; 9],
 }
 
 impl LogEvent {
@@ -129,7 +128,6 @@ impl LogEvent {
       kv_id: Some(0),
       file_id: 0,
       position: (0, 0),
-      _padding: [0; 9],
     }
   }
 
@@ -155,6 +153,6 @@ impl LogEvent {
 }
 
 const _: () = {
-  assert!(std::mem::size_of::<LogEvent>() == 40);
+  assert!(std::mem::size_of::<LogEvent>() == 32);
   assert!(std::mem::align_of::<LogEvent>() >= 8);
 };

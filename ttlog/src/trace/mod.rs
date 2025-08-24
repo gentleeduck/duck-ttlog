@@ -205,7 +205,6 @@ impl Trace {
       position,
       file_id,
       kv_id,
-      _padding: [0; 9],
     };
 
     // Push to both buffers - listeners get real-time events, snapshots accumulate
