@@ -1,4 +1,5 @@
 mod app;
+mod logs_widget;
 mod main_widget;
 mod monotring;
 mod stats_widget;
@@ -17,7 +18,8 @@ use ratatui::{
 };
 
 use crate::{
-  main_widget::MainWidget, stats_widget::StatsWidget, tabs_widget::ListWidget, widget::Widget,
+  logs_widget::LogsWidget, main_widget::MainWidget, stats_widget::StatsWidget,
+  tabs_widget::ListWidget, widget::Widget,
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -31,21 +33,23 @@ fn main() -> color_eyre::Result<()> {
 fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
   let mut main = MainWidget::new();
   let mut list = ListWidget::new();
-  let mut stats = StatsWidget::new();
+  // let mut stats = StatsWidget::new();
+  let mut logs = LogsWidget::new();
 
   loop {
-    terminal.draw(|f| reader_ui(f, &mut main, &mut list, &mut stats))?;
+    terminal.draw(|f| reader_ui(f, &mut main, &mut list, &mut logs))?;
 
     if event::poll(std::time::Duration::from_millis(100))? {
       match event::read()? {
         // Global checking for q pressing to quite.
+        Event::Key(k) if matches!(k.code, KeyCode::Char('q')) => break Ok(()),
         Event::Key(k) => {
           list.on_key(k);
-          stats.on_key(k);
+          logs.on_key(k);
         },
         Event::Mouse(m) => {
           list.on_mouse(m);
-          stats.on_mouse(m);
+          logs.on_mouse(m);
         },
         _ => {},
       }
@@ -57,7 +61,7 @@ pub fn reader_ui(
   f: &mut Frame<'_>,
   main: &mut MainWidget,
   list: &mut ListWidget,
-  stats: &mut StatsWidget,
+  logs: &mut LogsWidget,
 ) {
   let area = f.area();
 
@@ -75,17 +79,17 @@ pub fn reader_ui(
 
   // Split vertically: header (3 rows) + content (rest)
   let chunks = Layout::default()
-    .direction(Direction::Vertical)
-    .constraints([Constraint::Length(3), Constraint::Min(0)])
+    .direction(Direction::Horizontal)
+    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
     .split(inner_area);
 
   let first_layer = Layout::default()
-    .direction(Direction::Horizontal)
-    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+    .direction(Direction::Vertical)
+    .constraints([Constraint::Length(3), Constraint::Min(0)])
     .split(chunks[0]);
 
   main.render(f, &b, area);
-  // Render list in the second chunk (main content)
-  list.render(f, &mut b, first_layer[0], true);
-  stats.render(f, &mut b, first_layer[1], false);
+
+  list.render(f, first_layer[0], true);
+  logs.render(f, first_layer[1], true);
 }

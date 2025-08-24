@@ -27,7 +27,7 @@ pub struct ResolvedEvent {
   pub packed_meta: u64,
   pub message: String,
   pub target: String,
-  pub kv: Option<String>,
+  pub kv: Option<smallvec::SmallVec<[u8; 128]>>,
   pub file: String,
   pub position: (u32, u32),
 }
@@ -73,10 +73,7 @@ impl SnapshotWriter {
           },
         };
 
-        let kv = event
-          .kv_id
-          .and_then(|id| interner.get_kv(id))
-          .map(|s| s.to_string());
+        let kv = event.kv_id.and_then(|id| interner.get_kv(id)).map(|s| s);
 
         let file = match interner.get_file(event.file_id) {
           Some(f) => f.to_string(),
@@ -92,7 +89,7 @@ impl SnapshotWriter {
           file,
           message,
           target,
-          kv,
+          kv: kv.map(|arc| (*arc).clone()),
         })
       })
       .collect();

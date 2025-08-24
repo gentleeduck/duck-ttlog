@@ -44,7 +44,7 @@ impl ListWidget {
   pub fn new() -> Self {
     Self {
       id: 0,
-      title: "Menu",
+      title: "~ Menu ~",
       items: [ViewMode::Overview, ViewMode::Logs],
       selected: 0,
       area: None,
@@ -53,7 +53,7 @@ impl ListWidget {
 }
 
 impl Widget for ListWidget {
-  fn render(&mut self, f: &mut Frame<'_>, b: &mut Block<'_>, area: Rect, focused: bool) {
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect, focused: bool) {
     let tab_titles: Vec<Line> = self
       .items
       .iter()

@@ -10,7 +10,11 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
+itoa = "1.0.15"
+serde.workspace = true
 serde_json.workspace = true
+smallvec.workspace = true
+syn.workspace = true
 # Tracing ecosystem
 tracing = { workspace = true }
 

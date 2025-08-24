@@ -1686,7 +1686,11 @@ dependencies = [
 name = "ttlog-simple"
 version = "0.1.0"
 dependencies = [
+ "itoa",
+ "serde",
  "serde_json",
+ "smallvec",
+ "syn 2.0.106",
  "tracing",
  "ttlog",
  "uuid",

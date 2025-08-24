@@ -34,7 +34,7 @@ impl StatsWidget {
 }
 
 impl Widget for StatsWidget {
-  fn render(&mut self, f: &mut Frame<'_>, _b: &mut Block<'_>, area: Rect, _focused: bool) {
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect, _focused: bool) {
     let block = Block::default()
       .title("TTLog Stats")
       .border_type(BorderType::Rounded)

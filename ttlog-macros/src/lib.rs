@@ -48,6 +48,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
     }
   };
 
+
   match (parsed.message, parsed.kvs.is_empty()) {
     // Case 1: Simple message, no key-values - FASTEST PATH
     (Some(message), true) => {
@@ -82,14 +83,15 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
     // Case 2: Message with key-values - OPTIMIZED PATH
     (Some(message), false) => {
-      let kv_keys: Vec<String> = parsed
+      let kv_keys: Vec<_> = parsed
         .kvs
         .iter()
-        .map(|(k, _)| k.to_string())
+        .map(|(k, _)| k)
         .collect();
     
       let kv_values = parsed.kvs.iter().map(|(_, v)| v);
-    
+      let num_kvs = parsed.kvs.iter().len();
+
       quote! {
         {
           const LEVEL: u8 = #level;
@@ -97,6 +99,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           const MODULE: &'static str = module_path!();
           const FILE: &'static str = file!();
           const POSITION: (u32, u32) = (line!(), column!());
+          const NUM_VALUES: usize = #num_kvs;
     
           static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
           static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
@@ -109,16 +112,51 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
     
-                // Build structured map
-                let mut kv_map = std::collections::HashMap::<&'static str, String>::new();
-                #(
-                  kv_map.insert(#kv_keys, format!("{}", #kv_values));
-                )*
-                // Turn into JSON for storage
-                let json_str = serde_json::to_string(&kv_map).unwrap();
+                struct SmallVec(smallvec::SmallVec<[u8; 128]>);
+
+                impl SmallVec {
+                  pub fn with_capacity(cap: usize) -> Self {
+                    SmallVec(smallvec::SmallVec::with_capacity(cap))
+                  }
+                }
+
+                impl std::io::Write for SmallVec {
+                  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    self.0.extend_from_slice(buf);
+                    Ok(buf.len())
+                  }
+
+                  fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                  }
+                }
+                let mut buf = SmallVec::with_capacity(128);
+                {
+                  use serde::ser::{SerializeMap, Serializer}; // <-- import the trait!
+                  let mut ser = serde_json::Serializer::new(&mut buf);
+                  // This gives you something that implements SerializeMap
+                  let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
+                  let mut id_buf = itoa::Buffer::new();
+                  #({map.serialize_entry(&#kv_keys, &{
+
+                    if let syn::Expr::Lit(expr_lit) = #kv_values {
+                      match &expr_lit.lit {
+                          syn::Lit::Str(_) => println!("This is a string literal"),
+                          syn::Lit::Int(_) => println!("This is an integer literal"),
+                          syn::Lit::Float(_) => println!("This is a float literal"),
+                          _ => println!("Other literal"),
+                      }
+                    } else {
+                     println!("Not a literal at all");
+                    }
+
+                  }).unwrap()})*
+
+                  map.end().unwrap();
+                }
     
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
-                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(json_str.as_str()));
+                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.0));
     
                 logger.send_event_fast(
                   LEVEL,

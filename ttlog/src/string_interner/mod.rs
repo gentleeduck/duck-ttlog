@@ -99,7 +99,7 @@ pub struct StringInterner {
   targets: RwLock<Vec<Arc<str>>>,
   messages: RwLock<Vec<Arc<str>>>,
   files: RwLock<Vec<Arc<str>>>,
-  kvs: RwLock<Vec<Arc<str>>>,
+  kvs: RwLock<Vec<Arc<smallvec::SmallVec<[u8; 128]>>>>,
 
   target_lookup: RwLock<HashMap<u64, u16>>,
   message_lookup: RwLock<HashMap<u64, u16>>,
@@ -209,8 +209,8 @@ impl StringInterner {
   }
 
   #[inline]
-  pub fn intern_kv(&self, string: &str) -> u16 {
-    let hash = self.fast_hash(string);
+  pub fn intern_kv(&self, buf: smallvec::SmallVec<[u8; 128]>) -> u16 {
+    let hash = self.fast_hash_smallvec(&buf);
 
     LOCAL_CACHE.with(|cache| {
       let cache_ptr = cache.get();
@@ -220,7 +220,7 @@ impl StringInterner {
         }
       }
 
-      let id = self.intern_string_slow(string, &self.kvs, &self.kv_lookup, &self.kv_count);
+      let id = self.intern_string_slow_smallvec(buf, &self.kvs, &self.kv_lookup, &self.kv_count);
 
       unsafe {
         (*cache_ptr).put_kv(hash, id);
@@ -228,6 +228,47 @@ impl StringInterner {
 
       id
     })
+  }
+
+  #[cold]
+  fn intern_string_slow_smallvec(
+    &self,
+    string: smallvec::SmallVec<[u8; 128]>,
+    storage: &RwLock<Vec<Arc<smallvec::SmallVec<[u8; 128]>>>>,
+    lookup: &RwLock<HashMap<u64, u16>>,
+    counter: &AtomicU16,
+  ) -> u16 {
+    let hash = self.fast_hash_smallvec(&string);
+
+    // Try read lock first - allows concurrent reads
+    if let Ok(lookup_guard) = lookup.read() {
+      if let Some(&id) = lookup_guard.get(&hash) {
+        return id;
+      }
+    }
+
+    // Need write lock for insertion
+    let mut lookup_guard = lookup.write().unwrap();
+
+    // Double-check after acquiring write lock (race condition protection)
+    if let Some(&id) = lookup_guard.get(&hash) {
+      return id;
+    }
+
+    let mut storage_guard = storage.write().unwrap();
+    let id = storage_guard.len() as u16;
+
+    // Handle overflow case (extremely rare)
+    if id == u16::MAX {
+      return 0;
+    }
+
+    // Insert new string
+    storage_guard.push(Arc::from(string));
+    lookup_guard.insert(hash, id);
+    counter.store(id + 1, Ordering::Relaxed);
+
+    id
   }
 
   #[cold]
@@ -283,7 +324,7 @@ impl StringInterner {
     self.messages.read().unwrap().get(id as usize).cloned()
   }
 
-  pub fn get_kv(&self, id: u16) -> Option<Arc<str>> {
+  pub fn get_kv(&self, id: u16) -> Option<Arc<smallvec::SmallVec<[u8; 128]>>> {
     self.kvs.read().unwrap().get(id as usize).cloned()
   }
 
@@ -311,6 +352,32 @@ impl StringInterner {
   /// - Input comes from valid string slices
   /// - `read_unaligned` handles arbitrary alignment
   /// - Chunk size is validated by `chunks_exact(8)`
+
+  #[inline]
+  fn fast_hash_smallvec(&self, s: &smallvec::SmallVec<[u8; 128]>) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64; // FNV offset basis
+    let bytes: &[u8] = s.as_slice();
+
+    // Process 8 bytes at a time
+    let chunks = bytes.chunks_exact(8);
+    let remainder = chunks.remainder();
+
+    for chunk in chunks {
+      // Convert 8-byte chunk into u64 (little endian for consistency)
+      let chunk_u64 = u64::from_le_bytes(chunk.try_into().unwrap());
+      hash ^= chunk_u64;
+      hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    // Process remaining bytes (0–7)
+    for &byte in remainder {
+      hash ^= byte as u64;
+      hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    hash
+  }
+
   #[inline]
   fn fast_hash(&self, s: &str) -> u64 {
     let mut hash = 0xcbf29ce484222325u64; // FNV offset basis
