@@ -1,6 +1,7 @@
 mod __test__;
 
 use chrono::Duration;
+use std::num;
 use std::sync::OnceLock;
 use std::time::Instant;
 use std::{sync::Arc, thread};
@@ -175,11 +176,11 @@ impl Trace {
     &self,
     log_level: u8,
     target_id: u16,
-    message_id: Option<u16>,
+    message_id: Option<num::NonZeroU16>,
     thread_id: u8,
     file_id: u16,
     position: (u32, u32),
-    kv_id: Option<u16>,
+    kv_id: Option<num::NonZeroU16>,
   ) {
     // Fast level check first
     if log_level > self.level.load(Ordering::Relaxed) {

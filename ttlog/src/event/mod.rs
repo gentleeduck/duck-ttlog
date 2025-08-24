@@ -1,5 +1,6 @@
 mod __test__;
 
+use core::num;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -86,8 +87,8 @@ impl Field {
 pub struct LogEvent {
   pub packed_meta: u64,
   pub target_id: u16,
-  pub message_id: Option<u16>,
-  pub kv_id: Option<u16>,
+  pub message_id: Option<num::NonZeroU16>,
+  pub kv_id: Option<num::NonZeroU16>,
   pub file_id: u16,
   pub position: (u32, u32),
 }
@@ -124,8 +125,8 @@ impl LogEvent {
     Self {
       packed_meta: 0,
       target_id: 0,
-      message_id: Some(0),
-      kv_id: Some(0),
+      message_id: num::NonZeroU16::new(0),
+      kv_id: num::NonZeroU16::new(0),
       file_id: 0,
       position: (0, 0),
     }
@@ -135,8 +136,8 @@ impl LogEvent {
   pub fn reset(&mut self) {
     self.packed_meta = 0;
     self.target_id = 0;
-    self.message_id = Some(0);
-    self.kv_id = Some(0);
+    self.message_id = num::NonZeroU16::new(0);
+    self.kv_id = num::NonZeroU16::new(0);
     self.file_id = 0;
     self.position = (0, 0);
     // Note: fields array is not cleared for performance -
@@ -153,6 +154,6 @@ impl LogEvent {
 }
 
 const _: () = {
-  assert!(std::mem::size_of::<LogEvent>() == 32);
+  assert!(std::mem::size_of::<LogEvent>() == 24);
   assert!(std::mem::align_of::<LogEvent>() >= 8);
 };

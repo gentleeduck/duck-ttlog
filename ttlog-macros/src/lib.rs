@@ -48,22 +48,76 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
     }
   };
 
+  let common_constants = quote! {
+    const LEVEL: u8 = #level;
+    const MODULE: &'static str = module_path!();
+    const FILE: &'static str = file!();
+    const POSITION: (u32, u32) = (line!(), column!());
+  };
+
+  let common_statics = quote! {
+    static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+    static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+  };
+
+  let common_kv_code = quote! {
+    struct SmallVec(smallvec::SmallVec<[u8; 128]>);
+
+    impl SmallVec {
+      pub fn with_capacity(cap: usize) -> Self {
+        SmallVec(smallvec::SmallVec::with_capacity(cap))
+      }
+    }
+
+    impl std::io::Write for SmallVec {
+      fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+      }
+
+      fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+      }
+    }
+
+
+    struct IntOrSer<'a, T>(&'a T);
+    
+    impl<'a, T> serde::Serialize for IntOrSer<'a, T>
+    where
+      T: serde::Serialize + 'static,
+    {
+      fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+      where
+        S: serde::Serializer,
+      {
+        if let Some(i) = (self.0 as &dyn std::any::Any).downcast_ref::<i64>() {
+          let mut buf = itoa::Buffer::new();
+          return serializer.serialize_str(buf.format(*i));
+        }
+    
+        if let Some(u) = (self.0 as &dyn std::any::Any).downcast_ref::<u64>() {
+          let mut buf = itoa::Buffer::new();
+          return serializer.serialize_str(buf.format(*u));
+        }
+    
+        self.0.serialize(serializer)
+      }
+    }
+  };
+
 
   match (parsed.message, parsed.kvs.is_empty()) {
     // Case 1: Simple message, no key-values - FASTEST PATH
     (Some(message), true) => {
       quote! {
         {
-          const LEVEL: u8 = #level;
+          #common_constants
           const MESSAGE: &'static str = #message;
-          const MODULE: &'static str = module_path!();
-          const FILE: &'static str = file!();
-          const POSITION: (u32, u32) = (line!(), column!());
 
           // Static caching - these are computed only once per call site
-          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          #common_statics
           static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {
@@ -94,68 +148,19 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
       quote! {
         {
-          const LEVEL: u8 = #level;
+          #common_constants
           const MESSAGE: &'static str = #message;
-          const MODULE: &'static str = module_path!();
-          const FILE: &'static str = file!();
-          const POSITION: (u32, u32) = (line!(), column!());
           const NUM_VALUES: usize = #num_kvs;
     
-          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          #common_statics
           static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
           static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
     
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {
               if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
-                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
     
-                struct SmallVec(smallvec::SmallVec<[u8; 128]>);
-
-                impl SmallVec {
-                  pub fn with_capacity(cap: usize) -> Self {
-                    SmallVec(smallvec::SmallVec::with_capacity(cap))
-                  }
-                }
-
-                impl std::io::Write for SmallVec {
-                  fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                    self.0.extend_from_slice(buf);
-                    Ok(buf.len())
-                  }
-
-                  fn flush(&mut self) -> std::io::Result<()> {
-                    Ok(())
-                  }
-                }
-
-
-                struct IntOrSer<'a, T>(&'a T);
-                
-                impl<'a, T> serde::Serialize for IntOrSer<'a, T>
-                where
-                  T: serde::Serialize + 'static,
-                {
-                  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-                  where
-                    S: serde::Serializer,
-                  {
-                    if let Some(i) = (self.0 as &dyn std::any::Any).downcast_ref::<i64>() {
-                      let mut buf = itoa::Buffer::new();
-                      return serializer.serialize_str(buf.format(*i));
-                    }
-                
-                    if let Some(u) = (self.0 as &dyn std::any::Any).downcast_ref::<u64>() {
-                      let mut buf = itoa::Buffer::new();
-                      return serializer.serialize_str(buf.format(*u));
-                    }
-                
-                    self.0.serialize(serializer)
-                  }
-                }
-
+                #common_kv_code
                 let mut buf = SmallVec::with_capacity(128);
                 {
                   use serde::ser::{SerializeMap, Serializer}; // <-- import the trait!
@@ -169,7 +174,9 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
                   map.end().unwrap();
                 }
-    
+                
+                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
                 let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.0));
     
@@ -206,22 +213,30 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           const FILE: &'static str = file!();
           const POSITION: (u32, u32) = (line!(), column!());
 
-          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          #common_statics
           static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {
               if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
                 // Build structured map
-                let mut kv_map = std::collections::HashMap::<&'static str, String>::new();
-                #(
-                  kv_map.insert(#kv_keys, format!("{}", #kv_values));
-                )*
-                // Turn into JSON for storage
-                let json_str = serde_json::to_string(&kv_map).unwrap();
-    
-                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(json_str.as_str()));
+               #common_kv_code
+                let mut buf = SmallVec::with_capacity(128);
+                {
+                  use serde::ser::{SerializeMap, Serializer}; // <-- import the trait!
+                  let mut ser = serde_json::Serializer::new(&mut buf);
+                  // This gives you something that implements SerializeMap
+                  let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
+                  #({
+                    let wrapper = IntOrSer(&#kv_values);
+                    map.serialize_entry(&#kv_keys, &wrapper).unwrap();
+                  })*
+
+                  map.end().unwrap();
+                }
+                
+                let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
+                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.0));
                 let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
@@ -237,14 +252,10 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
     (None, true) => {
       quote! {
         {
-          const LEVEL: u8 = #level;
-          const MODULE: &'static str = module_path!();
-          const FILE: &'static str = file!();
-          const POSITION: (u32, u32) = (line!(), column!());
+          #common_constants
 
-          static TARGET_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+          #common_statics
           static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
           ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
             if let Some(logger) = logger_cell.get() {

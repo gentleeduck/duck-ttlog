@@ -20,19 +20,14 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   error!("An error occurred in the DB it might be shutting down");
 
   // Step 3: Log with structured data
+  let user_id = 42;
+  let username = "alice";
+  info!(user_id = user_id, username = username, "User logged in");
 
   panic!("SIGINT received, shutting down!!");
 
   println!("Done! Check ./tmp/ for ttlog-*.bin files");
   println!("Run: ls -la ./tmp/ttlog-*.bin");
-
-  let v = vec![1, 2, 3];
-
-  for x in v.into_iter() {
-    println!("{}", x); // x: i32 (owned)
-  }
-
-  // println!("{:?}", v); // ERROR: v was moved
 
   Ok(())
 }
