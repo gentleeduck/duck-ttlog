@@ -64,17 +64,10 @@ proc-macro2 = "1.0"
 rand = "0.8"
 
 [profile.release]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-panic = "abort"
-strip = true
-incremental = false
-
-[profile.bench]
-opt-level = 3
-lto = "thin"
-codegen-units = 1
-debug = false
-panic = "abort"
-incremental = false
+opt-level = 0           # No optimizations
+debug = true            # Include debug symbols
+debug-assertions = true # Runtime checks enabled
+lto = false            # No Link Time Optimization
+codegen-units = 256    # Parallel compilation (faster builds)
+panic = "unwind"       # Can unwind stack traces
+rpath = false          # Don't embed library paths

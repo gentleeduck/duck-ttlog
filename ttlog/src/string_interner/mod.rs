@@ -9,10 +9,10 @@ use std::{
 
 #[derive(Debug)]
 struct LocalCache {
-  target_cache: [(u64, u16); 32],
-  message_cache: [(u64, u16); 32],
-  file_cache: [(u64, u16); 32],
-  kv_cache: [(u64, u16); 32],
+  target_cache: [(u64, u16); 64],
+  message_cache: [(u64, u16); 64],
+  file_cache: [(u64, u16); 64],
+  kv_cache: [(u64, u16); 64],
   target_counter: u8,
   message_counter: u8,
   file_counter: u8,
@@ -22,10 +22,10 @@ struct LocalCache {
 impl LocalCache {
   fn new() -> Self {
     Self {
-      target_cache: [(0, 0); 32],
-      message_cache: [(0, 0); 32],
-      file_cache: [(0, 0); 32],
-      kv_cache: [(0, 0); 32],
+      target_cache: [(0, 0); 64],
+      message_cache: [(0, 0); 64],
+      file_cache: [(0, 0); 64],
+      kv_cache: [(0, 0); 64],
       target_counter: 0,
       message_counter: 0,
       file_counter: 0,

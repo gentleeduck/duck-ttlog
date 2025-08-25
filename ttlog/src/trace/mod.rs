@@ -3,7 +3,7 @@ mod __test__;
 use chrono::Duration;
 use std::num;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{sync::Arc, thread};
 
 use crate::event::{LogEvent, LogLevel};
@@ -188,12 +188,10 @@ impl Trace {
     }
 
     // Create event directly on stack - no heap allocation
-    let timestamp = unsafe {
-      // SAFETY: This is faster than chrono for hot path
-      // Use rdtsc or similar for even faster timing if needed
-      // TODO: support other platforms
-      std::arch::x86_64::_rdtsc()
-    };
+    let timestamp = SystemTime::now()
+      .duration_since(UNIX_EPOCH)
+      .unwrap_or_default()
+      .as_millis() as u64;
 
     let event = LogEvent {
       packed_meta: LogEvent::pack_meta(

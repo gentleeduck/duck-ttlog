@@ -57,7 +57,10 @@ impl SnapshotWriter {
       .iter()
       .filter_map(|event| {
         // Try to get all required values, early return None if missing
-        let message = match event.message_id.and_then(|id| interner.get_message(id)) {
+        let message = match event
+          .message_id
+          .and_then(|id| interner.get_message(id.get()))
+        {
           Some(m) => m.to_string(),
           None => {
             eprintln!("[Trace] Unknown message id: {:?}", event.message_id);
@@ -73,7 +76,10 @@ impl SnapshotWriter {
           },
         };
 
-        let kv = event.kv_id.and_then(|id| interner.get_kv(id)).map(|s| s);
+        let kv = event
+          .kv_id
+          .and_then(|id| interner.get_kv(id.get()))
+          .map(|s| s);
 
         let file = match interner.get_file(event.file_id) {
           Some(f) => f.to_string(),
