@@ -25,11 +25,6 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   info!(user_id = user_id, username = username, "User logged in");
 
   panic!("SIGINT received, shutting down!!");
-
-  println!("Done! Check ./tmp/ for ttlog-*.bin files");
-  println!("Run: ls -la ./tmp/ttlog-*.bin");
-
-  Ok(())
 }
 
 // use std::sync::Arc;

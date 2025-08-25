@@ -91,14 +91,29 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
       where
         S: serde::Serializer,
       {
+
+        // handle i64
         if let Some(i) = (self.0 as &dyn std::any::Any).downcast_ref::<i64>() {
           let mut buf = itoa::Buffer::new();
           return serializer.serialize_str(buf.format(*i));
         }
     
+        // handle u64
         if let Some(u) = (self.0 as &dyn std::any::Any).downcast_ref::<u64>() {
           let mut buf = itoa::Buffer::new();
           return serializer.serialize_str(buf.format(*u));
+        }
+
+        // handle f64
+        if let Some(f) = (self.0 as &dyn std::any::Any).downcast_ref::<f64>() {
+          let mut buf = ryu::Buffer::new();
+          return serializer.serialize_str(buf.format(*f));
+        }
+
+        // handle f32
+        if let Some(f) = (self.0 as &dyn std::any::Any).downcast_ref::<f32>() {
+          let mut buf = ryu::Buffer::new();
+          return serializer.serialize_str(buf.format(*f));
         }
     
         self.0.serialize(serializer)
@@ -127,7 +142,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-                logger.send_event_fast(LEVEL, target_id, Some(message_id), #thread_id_expr, file_id, POSITION, None);
+                logger.send_event_fast(LEVEL, target_id, std::num::NonZeroU16::new(message_id), #thread_id_expr, file_id, POSITION, None);
               }
             }
           });
@@ -166,7 +181,10 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                   use serde::ser::{SerializeMap, Serializer}; // <-- import the trait!
                   let mut ser = serde_json::Serializer::new(&mut buf);
                   // This gives you something that implements SerializeMap
-                  let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
+                  let mut map = match ser.serialize_map(Some(NUM_VALUES)) {
+                    Ok(m) => m,
+                    Err(_) => return,
+                  };
                   #({
                     let wrapper = IntOrSer(&#kv_values);
                     map.serialize_entry(&#kv_keys, &wrapper).unwrap();
@@ -183,11 +201,11 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 logger.send_event_fast(
                   LEVEL,
                   target_id,
-                  Some(message_id),
+                  std::num::NonZeroU16::new(message_id),
                   #thread_id_expr,
                   file_id,
                   POSITION,
-                  Some(kv_id),
+                  std::num::NonZeroU16::new(kv_id),
                 );
               }
             }
@@ -205,13 +223,12 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
         .collect();
     
       let kv_values = parsed.kvs.iter().map(|(_, v)| v);
+      let num_kvs = parsed.kvs.iter().len();
 
       quote! {
         {
-          const LEVEL: u8 = #level;
-          const MODULE: &'static str = module_path!();
-          const FILE: &'static str = file!();
-          const POSITION: (u32, u32) = (line!(), column!());
+          #common_constants
+          const NUM_VALUES: usize = #num_kvs;
 
           #common_statics
           static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
@@ -220,13 +237,17 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
             if let Some(logger) = logger_cell.get() {
               if LEVEL <= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
                 // Build structured map
-               #common_kv_code
+                #common_kv_code
                 let mut buf = SmallVec::with_capacity(128);
                 {
                   use serde::ser::{SerializeMap, Serializer}; // <-- import the trait!
                   let mut ser = serde_json::Serializer::new(&mut buf);
                   // This gives you something that implements SerializeMap
-                  let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
+                  let mut map = match ser.serialize_map(Some(NUM_VALUES)) {
+                    Ok(m) => m,
+                    Err(_) => return,
+                  };
+
                   #({
                     let wrapper = IntOrSer(&#kv_values);
                     map.serialize_entry(&#kv_keys, &wrapper).unwrap();
@@ -235,12 +256,11 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                   map.end().unwrap();
                 }
                 
-                let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
                 let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.0));
                 let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-                logger.send_event_fast(LEVEL, target_id, None, #thread_id_expr, file_id, POSITION, Some(kv_id));
+                logger.send_event_fast(LEVEL, target_id, None, #thread_id_expr, file_id, POSITION, std::num::NonZeroU16::new(kv_id));
               }
             }
           });
@@ -264,7 +284,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(""));
                 let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-                logger.send_event_fast(LEVEL, target_id, Some(message_id), #thread_id_expr, file_id, POSITION, None);
+                logger.send_event_fast(LEVEL, target_id, std::num::NonZeroU16::new(message_id), #thread_id_expr, file_id, POSITION, None);
               }
             }
           });

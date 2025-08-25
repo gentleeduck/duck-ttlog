@@ -1671,6 +1671,7 @@ version = "0.1.0"
 dependencies = [
  "proc-macro2",
  "quote",
+ "ryu",
  "syn 2.0.106",
 ]
 
@@ -1689,6 +1690,7 @@ dependencies = [
  "itoa",
  "proc-macro2",
  "quote",
+ "ryu",
  "serde",
  "serde_json",
  "smallvec",
