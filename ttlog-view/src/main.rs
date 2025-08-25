@@ -88,8 +88,14 @@ pub fn reader_ui(
     .constraints([Constraint::Length(3), Constraint::Min(0)])
     .split(chunks[0]);
 
+  let second_layer = Layout::default()
+    .direction(Direction::Vertical)
+    .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+    .split(first_layer[1]);
+
   main.render(f, &b, area);
 
   list.render(f, first_layer[0], true);
-  logs.render(f, first_layer[1], true);
+  logs.render(f, second_layer[0], true);
+  logs.render(f, second_layer[1], true);
 }
