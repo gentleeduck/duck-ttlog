@@ -1,4 +1,5 @@
 mod app;
+mod logs_graph_widget;
 mod logs_widget;
 mod main_widget;
 mod monotring;
@@ -18,8 +19,8 @@ use ratatui::{
 };
 
 use crate::{
-  logs_widget::LogsWidget, main_widget::MainWidget, stats_widget::StatsWidget,
-  tabs_widget::ListWidget, widget::Widget,
+  logs_graph_widget::LogsGraphWidget, logs_widget::LogsWidget, main_widget::MainWidget,
+  stats_widget::StatsWidget, tabs_widget::ListWidget, widget::Widget,
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -35,9 +36,10 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
   let mut list = ListWidget::new();
   // let mut stats = StatsWidget::new();
   let mut logs = LogsWidget::new();
+  let mut logs_graph = LogsGraphWidget::new();
 
   loop {
-    terminal.draw(|f| reader_ui(f, &mut main, &mut list, &mut logs))?;
+    terminal.draw(|f| reader_ui(f, &mut main, &mut list, &mut logs, &mut logs_graph))?;
 
     if event::poll(std::time::Duration::from_millis(100))? {
       match event::read()? {
@@ -46,10 +48,12 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         Event::Key(k) => {
           list.on_key(k);
           logs.on_key(k);
+          logs_graph.on_key(k);
         },
         Event::Mouse(m) => {
           list.on_mouse(m);
           logs.on_mouse(m);
+          logs_graph.on_mouse(m);
         },
         _ => {},
       }
@@ -62,6 +66,7 @@ pub fn reader_ui(
   main: &mut MainWidget,
   list: &mut ListWidget,
   logs: &mut LogsWidget,
+  logs_graph: &mut LogsGraphWidget,
 ) {
   let area = f.area();
 
@@ -97,5 +102,5 @@ pub fn reader_ui(
 
   list.render(f, first_layer[0], true);
   logs.render(f, second_layer[0], true);
-  logs.render(f, second_layer[1], true);
+  logs_graph.render(f, second_layer[1], true);
 }

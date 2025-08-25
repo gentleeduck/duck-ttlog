@@ -12,6 +12,7 @@ pub enum LogLevel {
   INFO = 2,
   WARN = 3,
   ERROR = 4,
+  FATAL = 5,
 }
 
 impl LogLevel {
@@ -23,6 +24,7 @@ impl LogLevel {
       2 => LogLevel::INFO,
       3 => LogLevel::WARN,
       4 => LogLevel::ERROR,
+      5 => LogLevel::FATAL,
       _ => LogLevel::INFO,
     }
   }
@@ -34,6 +36,7 @@ impl LogLevel {
       2 => "INFO",
       3 => "WARN",
       4 => "ERROR",
+      5 => "FATAL",
       _ => "INFO",
     }
   }
@@ -45,6 +48,7 @@ impl LogLevel {
       Self::INFO => "INFO",
       Self::WARN => "WARN",
       Self::ERROR => "ERROR",
+      Self::FATAL => "FATAL",
     }
   }
 }
