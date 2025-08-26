@@ -47,12 +47,12 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         Event::Key(k) if matches!(k.code, KeyCode::Char('q')) => break Ok(()),
         Event::Key(k) => {
           list.on_key(k);
-          logs.on_key(k);
+          // logs.on_key(k);
           logs_graph.on_key(k);
         },
         Event::Mouse(m) => {
           list.on_mouse(m);
-          logs.on_mouse(m);
+          // logs.on_mouse(m);
           logs_graph.on_mouse(m);
         },
         _ => {},

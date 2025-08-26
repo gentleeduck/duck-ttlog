@@ -1713,6 +1713,7 @@ dependencies = [
  "figlet-rs",
  "inquire",
  "lz4",
+ "rand",
  "ratatui",
  "regex",
  "serde",

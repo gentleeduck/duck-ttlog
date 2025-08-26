@@ -1,63 +1,14 @@
 use ratatui::{
-  layout::{Alignment, Constraint, Direction, Layout, Rect},
+  layout::{Alignment, Rect},
   style::{Color, Style},
-  symbols,
-  widgets::{Axis, Block, Borders, Chart, Dataset, Paragraph},
+  text::{Line, Span, Text},
+  widgets::{Block, Borders, Paragraph},
   Frame,
 };
-use std::collections::HashMap;
-use ttlog::{
-  event::LogLevel,
-  snapshot::ResolvedEvent,
-};
+use smallvec::SmallVec;
+use ttlog::{event::LogLevel, snapshot::ResolvedEvent};
 
 use crate::widget::Widget;
-
-// Local extension traits for external types
-trait ResolvedEventExt {
-  fn timestamp_millis(&self) -> u64;
-  fn level(&self) -> LogLevel;
-  fn thread_id(&self) -> u8;
-}
-
-// Backward compatibility with previous name used in main.rs
-pub type LogsGraphWidget = LogLevelBarWidget;
-
-impl ResolvedEventExt for ResolvedEvent {
-  #[inline]
-  fn timestamp_millis(&self) -> u64 {
-    self.packed_meta >> 12
-  }
-
-  #[inline]
-  fn level(&self) -> LogLevel {
-    // Safe conversion via provided helper
-    let raw = ((self.packed_meta >> 8) & 0xF) as u8;
-    LogLevel::from_u8(&raw)
-  }
-
-  #[inline]
-  fn thread_id(&self) -> u8 {
-    (self.packed_meta & 0xFF) as u8
-  }
-}
-
-trait LogLevelUiExt {
-  fn color(self) -> Color;
-}
-
-impl LogLevelUiExt for LogLevel {
-  fn color(self) -> Color {
-    match self {
-      LogLevel::TRACE => Color::Cyan,
-      LogLevel::DEBUG => Color::Blue,
-      LogLevel::INFO => Color::Green,
-      LogLevel::WARN => Color::Yellow,
-      LogLevel::ERROR => Color::Red,
-      LogLevel::FATAL => Color::Magenta,
-    }
-  }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum TimeRange {
@@ -70,26 +21,96 @@ pub enum TimeRange {
   All,
 }
 
-pub struct LogLevelBarWidget {
+pub struct LogsGraphWidget {
   id: u8,
   title: &'static str,
   pub events: Vec<ResolvedEvent>,
   pub time_range: TimeRange,
-  pub show_percentages: bool,
-  pub highlight_errors: bool,
-  pub show_counts: bool,
+
+  // minimal filter toggles (Total removed as a bar)
+  pub show_fatal: bool,
+  pub show_errors: bool,
+  pub show_warnings: bool,
+  pub show_info: bool,
+  pub show_debug: bool,
+  pub show_trace: bool,
 }
 
-impl LogLevelBarWidget {
+impl LogsGraphWidget {
   pub fn new() -> Self {
+    let events = || {
+      let log_levels = [
+        LogLevel::ERROR,
+        LogLevel::WARN,
+        LogLevel::INFO,
+        LogLevel::DEBUG,
+        LogLevel::TRACE,
+        LogLevel::FATAL,
+      ];
+
+      (0..50)
+        .map(|i| {
+          let level = log_levels[i % log_levels.len()];
+          ResolvedEvent {
+            // synthetic packed_meta: timestamp in high bits, level in bits [8..12]
+            packed_meta: ((i as u64) << 12) | ((level as u64) << 8),
+            message: format!(
+              "[{}] Simulated log message {}",
+              match level {
+                LogLevel::FATAL => "FATAL",
+                LogLevel::ERROR => "ERROR",
+                LogLevel::WARN => "WARN",
+                LogLevel::INFO => "INFO",
+                LogLevel::DEBUG => "DEBUG",
+                LogLevel::TRACE => "TRACE",
+              },
+              i
+            ),
+            target: format!(
+              "{}::module{}",
+              match level {
+                LogLevel::FATAL => "main",
+                LogLevel::ERROR => "service",
+                LogLevel::WARN => "controller",
+                LogLevel::INFO => "api",
+                LogLevel::DEBUG => "worker",
+                LogLevel::TRACE => "internal",
+              },
+              i % 3
+            ),
+            kv: Some(SmallVec::from_vec(vec![
+              (i % 255) as u8,
+              (i * 2 % 255) as u8,
+              (i * 3 % 255) as u8,
+            ])),
+            file: format!(
+              "{}.rs",
+              match level {
+                LogLevel::FATAL => "fatales",
+                LogLevel::ERROR => "errors",
+                LogLevel::WARN => "warnings",
+                LogLevel::INFO => "infos",
+                LogLevel::DEBUG => "debugs",
+                LogLevel::TRACE => "traces",
+              }
+            ),
+            position: (i as u32, (i * 7 % 100) as u32),
+          }
+        })
+        .collect()
+    };
+
     Self {
-      id: 1,
-      title: "Log Level Distribution",
-      events: Vec::new(),
-      time_range: TimeRange::Last1Hour,
-      show_percentages: true,
-      highlight_errors: true,
-      show_counts: true,
+      id: 2,
+      title: "~ Logs (bars) ~",
+      events: events(),
+      time_range: TimeRange::All,
+      show_fatal: true,
+      show_errors: true,
+      show_warnings: true,
+      show_info: true,
+      show_debug: true,
+      show_trace: true,
     }
   }
 
@@ -98,13 +119,25 @@ impl LogLevelBarWidget {
     self
   }
 
-  fn filter_by_time_range(&self) -> Vec<&ResolvedEvent> {
+  #[inline]
+  fn event_ts_secs(e: &ResolvedEvent) -> u64 {
+    // same extraction as original: packed_meta >> 12 is ms since epoch
+    (e.packed_meta >> 12) / 1000
+  }
+
+  #[inline]
+  fn event_level(e: &ResolvedEvent) -> LogLevel {
+    let raw = ((e.packed_meta >> 8) & 0xF) as u8;
+    LogLevel::from_u8(&raw)
+  }
+
+  fn cutoff_secs(&self) -> u64 {
     let now = std::time::SystemTime::now()
       .duration_since(std::time::UNIX_EPOCH)
       .unwrap()
       .as_secs();
 
-    let cutoff = match self.time_range {
+    match self.time_range {
       TimeRange::Last5Min => now - 5 * 60,
       TimeRange::Last15Min => now - 15 * 60,
       TimeRange::Last1Hour => now - 60 * 60,
@@ -112,223 +145,280 @@ impl LogLevelBarWidget {
       TimeRange::Last24Hours => now - 24 * 60 * 60,
       TimeRange::Last7Days => now - 7 * 24 * 60 * 60,
       TimeRange::All => 0,
-    };
-
-    self
-      .events
-      .iter()
-      // packed timestamp is in milliseconds
-      .filter(|event| (event.timestamp_millis() / 1000) >= cutoff)
-      .collect()
+    }
   }
 
-  fn calculate_level_distribution(&self) -> HashMap<LogLevel, u64> {
-    let events = self.filter_by_time_range();
-    let mut level_counts = HashMap::new();
+  /// Aggregate counts across the filtered events.
+  /// Returns (total, fatal, errors, warnings, info, debug, trace).
+  fn aggregate_counts(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+    let cutoff = self.cutoff_secs();
 
-    for event in events {
-      *level_counts.entry(event.level()).or_insert(0u64) += 1;
+    let mut total = 0u64;
+    let mut fatal = 0u64;
+    let mut errors = 0u64;
+    let mut warns = 0u64;
+    let mut info = 0u64;
+    let mut debug = 0u64;
+    let mut trace = 0u64;
+
+    for ev in &self.events {
+      let ts = Self::event_ts_secs(ev);
+      if ts < cutoff {
+        continue;
+      }
+      total += 1;
+      match Self::event_level(ev) {
+        LogLevel::FATAL => fatal += 1,
+        LogLevel::ERROR => errors += 1,
+        LogLevel::WARN => warns += 1,
+        LogLevel::INFO => info += 1,
+        LogLevel::DEBUG => debug += 1,
+        LogLevel::TRACE => trace += 1,
+        _ => {},
+      }
     }
 
-    level_counts
+    (total, fatal, errors, warns, info, debug, trace)
   }
 
-  fn render_bar_chart(&self, f: &mut Frame<'_>, area: Rect, focused: bool) {
-    let level_counts = self.calculate_level_distribution();
-    let total_events: u64 = level_counts.values().sum();
+  fn format_time_range_label(&self) -> &'static str {
+    match self.time_range {
+      TimeRange::Last5Min => "Last 5m",
+      TimeRange::Last15Min => "Last 15m",
+      TimeRange::Last1Hour => "Last 1h",
+      TimeRange::Last6Hours => "Last 6h",
+      TimeRange::Last24Hours => "Last 24h",
+      TimeRange::Last7Days => "Last 7d",
+      TimeRange::All => "All",
+    }
+  }
 
-    if total_events == 0 {
-      let no_data = Paragraph::new("No log data available for selected time range")
-        .style(Style::default().fg(Color::Gray))
-        .alignment(Alignment::Center)
-        .block(
-          Block::default()
-            .title(self.title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(if focused { Color::Cyan } else { Color::Gray })),
-        );
-      f.render_widget(no_data, area);
+  /// Build visible bars: (label, value, style) — Total removed as a bar
+  fn build_bars(&self) -> Vec<(&'static str, u64, Style)> {
+    let (_total, fatal, errors, warns, info, debug, trace) = self.aggregate_counts();
+
+    let mut bars = Vec::new();
+    if self.show_fatal {
+      bars.push((
+        "Fatal",
+        fatal,
+        Style::default()
+          .fg(Color::Magenta)
+          .add_modifier(ratatui::style::Modifier::BOLD),
+      ));
+    }
+    if self.show_errors {
+      bars.push((
+        "Errors",
+        errors,
+        Style::default()
+          .fg(Color::Red)
+          .add_modifier(ratatui::style::Modifier::BOLD),
+      ));
+    }
+    if self.show_warnings {
+      bars.push(("Warns", warns, Style::default().fg(Color::Yellow)));
+    }
+    if self.show_info {
+      bars.push(("Info", info, Style::default().fg(Color::Green)));
+    }
+    if self.show_debug {
+      bars.push(("Debug", debug, Style::default().fg(Color::Cyan)));
+    }
+    if self.show_trace {
+      bars.push(("Trace", trace, Style::default().fg(Color::Gray)));
+    }
+
+    // at least one bar to avoid empty layout
+    if bars.is_empty() {
+      bars.push(("No data", 0, Style::default().fg(Color::Gray)));
+    }
+
+    bars
+  }
+
+  /// Helper: center / truncate string to width (ASCII-aware).
+  fn center_pad(s: &str, width: usize) -> String {
+    let mut s = s.to_string();
+    if s.len() > width {
+      s.truncate(width);
+    }
+    let pad = width.saturating_sub(s.len());
+    let left = pad / 2;
+    let right = pad - left;
+    format!("{}{}{}", " ".repeat(left), s, " ".repeat(right))
+  }
+
+  /// Render vertical bars manually so each bar can have its own color.
+  /// Bars have a fixed nominal width of 8 characters (falls back if space is tight).
+  /// Bars occupy at most 80% of chart height (top 20% is padding).
+  /// Right 40% is used as a colored bullet panel listing counts; bottom text removed.
+  fn render_colored_bars(&self, f: &mut Frame<'_>, area: Rect, focused: bool) {
+    let bars = self.build_bars();
+    let n = bars.len() as usize;
+    let (total, _, _, _, _, _, _) = self.aggregate_counts();
+    let max_value = bars.iter().map(|(_, v, _)| *v).max().unwrap_or(1);
+    let max_value = if max_value == 0 { 1 } else { max_value };
+
+    // draw outer block first (border + title)
+    let outer_block = Block::default()
+      .title(self.title)
+      .borders(Borders::ALL)
+      .border_style(Style::default().fg(if focused { Color::Cyan } else { Color::Gray }));
+    // render the outer block (border + title) around the whole area
+    f.render_widget(outer_block.clone(), area);
+
+    // leave space for border/title inside block
+    let inner = Rect {
+      x: area.x + 1,
+      y: area.y + 1,
+      width: area.width.saturating_sub(2),
+      height: area.height.saturating_sub(2),
+    };
+
+    if inner.width == 0 || inner.height == 0 {
       return;
     }
 
-    // Define log levels in order of severity
-    let levels = [
-      LogLevel::FATAL,
-      LogLevel::ERROR,
-      LogLevel::WARN,
-      LogLevel::INFO,
-      LogLevel::DEBUG,
-      LogLevel::TRACE,
-    ];
-
-    // Keep owned data vectors alive while referenced by datasets
-    let mut series: Vec<(&'static str, Color, Vec<(f64, f64)>)> = Vec::new();
-    for (i, &level) in levels.iter().enumerate() {
-      let count = *level_counts.get(&level).unwrap_or(&0);
-      if count == 0 {
-        continue;
-      }
-      let data = vec![(i as f64, count as f64)];
-      let color = if self.highlight_errors && matches!(level, LogLevel::ERROR | LogLevel::FATAL) {
-        Color::Red
+    // carve right 40% for the bullet panel
+    let gap_between = 1u16;
+    let right_w = {
+      let w = ((inner.width as f32) * 0.4f32).round() as u16;
+      if w < 12 {
+        12
       } else {
-        level.color()
+        w
+      } // minimum reasonable width
+    };
+    let right_w = right_w.min(inner.width.saturating_sub(10)); // ensure chart has space
+
+    let chart_w = inner.width.saturating_sub(right_w + gap_between);
+
+    let chart_area = Rect {
+      x: inner.x,
+      y: inner.y,
+      width: chart_w,
+      height: inner.height,
+    };
+
+    let right_panel = Rect {
+      x: inner.x + chart_w + gap_between,
+      y: inner.y,
+      width: right_w,
+      height: inner.height,
+    };
+
+    // desired per-bar width and gap (works inside chart_area)
+    let gap = 1u16;
+    let desired_bar_w = 8u16; // requested fixed width
+    let needed = n as u16 * desired_bar_w + (n as u16 - 1) * gap;
+    let bar_w = if chart_area.width >= needed {
+      desired_bar_w
+    } else {
+      let mut w = (chart_area.width.saturating_sub((n as u16 - 1) * gap)) / (n as u16);
+      if w == 0 {
+        w = 1;
+      }
+      w
+    };
+
+    // chart height in rows
+    let chart_h_total = chart_area.height as usize;
+
+    // if chart has no vertical space, bail
+    if chart_h_total == 0 {
+      return;
+    }
+
+    // usable portion for bars = 80% of chart_h_total
+    let usable_h_f = (chart_h_total as f64) * 0.8f64;
+    let usable_h = usable_h_f.round() as usize;
+    let top_padding = chart_h_total.saturating_sub(usable_h);
+
+    // build chart rows top->bottom
+    let mut lines: Vec<Line> = Vec::with_capacity(chart_h_total);
+    for row in 0..chart_h_total {
+      let mut spans: Vec<Span> = Vec::with_capacity(n * 2);
+      for (_, value, style) in &bars {
+        // compute bar height in rows relative to usable_h
+        let bar_h = ((*value as f64 / max_value as f64) * usable_h_f).round() as usize;
+        // distance from bottom of chart area
+        let dist_from_bottom = chart_h_total - row;
+        // the filled area starts after top_padding and occupies bar_h rows
+        // filled when dist_from_bottom <= bar_h
+        let filled = dist_from_bottom <= bar_h;
+        let s = if filled {
+          let chunk = std::iter::repeat('█')
+            .take(bar_w as usize)
+            .collect::<String>();
+          Span::styled(chunk, *style)
+        } else {
+          let chunk = std::iter::repeat(' ')
+            .take(bar_w as usize)
+            .collect::<String>();
+          Span::raw(chunk)
+        };
+        spans.push(s);
+        if gap > 0 {
+          spans.push(Span::raw(" ".repeat(gap as usize)));
+        }
+      }
+      lines.push(Line::from(spans));
+    }
+
+    // render the chart area (no block here; outer border already drawn)
+    let chart_para = Paragraph::new(Text::from(lines.clone())).alignment(Alignment::Left);
+    f.render_widget(chart_para, chart_area);
+
+    // draw the total count in the top-right corner of the border (small overlay)
+    let total_text = format!(" Total events: {} ", total);
+    let total_text_len = total_text.len() as u16;
+    if area.width > total_text_len + 2 {
+      let total_rect = Rect {
+        x: area.x + area.width.saturating_sub(total_text_len) - 1,
+        y: area.y,
+        width: total_text_len,
+        height: 1,
       };
-      series.push((level.as_str(), color, data));
+      let total_para = Paragraph::new(Line::from(vec![Span::styled(
+        total_text,
+        Style::default()
+          .fg(Color::White)
+          .add_modifier(ratatui::style::Modifier::BOLD),
+      )]))
+      .alignment(Alignment::Right);
+      f.render_widget(total_para, total_rect);
     }
 
-    let datasets: Vec<Dataset> = series
-      .iter()
-      .map(|(name, color, data)| {
-        Dataset::default()
-          .name(*name)
-          .marker(symbols::Marker::Block)
-          .style(Style::default().fg(*color))
-          .graph_type(ratatui::widgets::GraphType::Line)
-          .data(data)
-      })
-      .collect();
-
-    let max_count = level_counts.values().max().unwrap_or(&1);
-
-    // Create labels with counts and percentages if enabled
-    let x_labels: Vec<String> = levels
-      .iter()
-      .map(|&level| {
-        let count = *level_counts.get(&level).unwrap_or(&0);
-        let mut label = level.as_str().to_string();
-
-        if self.show_counts {
-          label.push_str(&format!("\n({})", count));
-        }
-
-        if self.show_percentages && total_events > 0 {
-          let percentage = (count as f64 / total_events as f64) * 100.0;
-          label.push_str(&format!("\n{:.1}%", percentage));
-        }
-
-        label
-      })
-      .collect();
-
-    let chart = Chart::new(datasets)
-      .block(
-        Block::default()
-          .title(format!("{} ({} events)", self.title, total_events))
-          .borders(Borders::ALL)
-          .border_style(Style::default().fg(if focused { Color::Cyan } else { Color::Gray })),
-      )
-      .x_axis(
-        Axis::default()
-          .title("Log Levels")
-          .style(Style::default().fg(Color::Gray))
-          .bounds([0.0, (levels.len() - 1) as f64])
-          .labels(x_labels),
-      )
-      .y_axis(
-        Axis::default()
-          .title("Count")
-          .style(Style::default().fg(Color::Gray))
-          .bounds([0.0, *max_count as f64 * 1.1])
-          .labels(vec![
-            "0".to_string(),
-            format!("{}", max_count / 4),
-            format!("{}", max_count / 2),
-            format!("{}", (max_count * 3) / 4),
-            format!("{}", max_count),
-          ]),
+    // Build right panel: bullet list with color + label + count
+    let mut right_lines: Vec<Line> = Vec::with_capacity(bars.len());
+    for (label, value, style) in &bars {
+      // bullet + space
+      let bullet = Span::styled("● ", *style);
+      // label text (bold-ish)
+      let lbl = Span::styled(
+        format!("{}: ", label),
+        Style::default().add_modifier(ratatui::style::Modifier::BOLD),
       );
-
-    f.render_widget(chart, area);
-  }
-
-  pub fn get_error_rate(&self) -> f64 {
-    let level_counts = self.calculate_level_distribution();
-    let total = level_counts.values().sum::<u64>();
-
-    if total == 0 {
-      return 0.0;
+      // count in plain white
+      let cnt = Span::styled(format!("{}", value), Style::default().fg(Color::White));
+      right_lines.push(Line::from(vec![bullet, lbl, cnt]));
     }
 
-    let error_count = level_counts.get(&LogLevel::ERROR).unwrap_or(&0)
-      + level_counts.get(&LogLevel::FATAL).unwrap_or(&0);
-
-    (error_count as f64 / total as f64) * 100.0
-  }
-
-  pub fn get_critical_alerts(&self) -> Vec<String> {
-    let level_counts = self.calculate_level_distribution();
-    let total = level_counts.values().sum::<u64>();
-    let mut alerts = Vec::new();
-
-    if total == 0 {
-      return alerts;
-    }
-
-    let fatal_count = *level_counts.get(&LogLevel::FATAL).unwrap_or(&0);
-    let error_count = *level_counts.get(&LogLevel::ERROR).unwrap_or(&0);
-    let warn_count = *level_counts.get(&LogLevel::WARN).unwrap_or(&0);
-
-    if fatal_count > 0 {
-      alerts.push(format!("🚨 {} FATAL errors detected!", fatal_count));
-    }
-
-    let error_rate = ((error_count + fatal_count) as f64 / total as f64) * 100.0;
-    if error_rate > 10.0 {
-      alerts.push(format!("⚠️ High error rate: {:.1}%", error_rate));
-    }
-
-    if warn_count > total / 2 {
-      alerts.push(format!("⚠️ High warning count: {}", warn_count));
-    }
-
-    alerts
+    // If there is extra space in the right panel, center content vertically a bit
+    let right_para = Paragraph::new(Text::from(right_lines)).alignment(Alignment::Left);
+    f.render_widget(right_para, right_panel);
   }
 }
 
-impl Widget for LogLevelBarWidget {
+impl Widget for LogsGraphWidget {
   fn render(&mut self, f: &mut Frame<'_>, area: Rect, focused: bool) {
-    let chunks = Layout::default()
-      .direction(Direction::Vertical)
-      .constraints([Constraint::Min(0), Constraint::Length(3)])
-      .split(area);
-
-    // Render main chart
-    self.render_bar_chart(f, chunks[0], focused);
-
-    // Render status/alerts bar at bottom
-    let alerts = self.get_critical_alerts();
-    let status_text = if alerts.is_empty() {
-      format!(
-        "Error Rate: {:.2}% | Range: {:?}",
-        self.get_error_rate(),
-        self.time_range
-      )
-    } else {
-      alerts.join(" | ")
-    };
-
-    let status_color = if alerts.is_empty() {
-      Color::Green
-    } else {
-      Color::Yellow
-    };
-
-    let status_paragraph = Paragraph::new(status_text)
-      .style(Style::default().fg(status_color))
-      .alignment(Alignment::Center)
-      .block(
-        Block::default()
-          .borders(Borders::TOP)
-          .border_style(Style::default().fg(Color::DarkGray)),
-      );
-
-    f.render_widget(status_paragraph, chunks[1]);
+    // draw bars left + right bullet panel + top-right total
+    self.render_colored_bars(f, area, focused);
   }
 
   fn on_key(&mut self, key: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode;
-
     match key.code {
       KeyCode::Char('t') => {
         self.time_range = match self.time_range {
@@ -336,23 +426,34 @@ impl Widget for LogLevelBarWidget {
           TimeRange::Last15Min => TimeRange::Last1Hour,
           TimeRange::Last1Hour => TimeRange::Last6Hours,
           TimeRange::Last6Hours => TimeRange::Last24Hours,
-          TimeRange::Last24Hours => TimeRange::All,
+          TimeRange::Last24Hours => TimeRange::Last7Days,
           TimeRange::Last7Days => TimeRange::All,
           TimeRange::All => TimeRange::Last5Min,
         };
       },
-      KeyCode::Char('p') => {
-        self.show_percentages = !self.show_percentages;
+      KeyCode::Char('f') => {
+        self.show_fatal = !self.show_fatal;
       },
-      KeyCode::Char('c') => {
-        self.show_counts = !self.show_counts;
+      KeyCode::Char('e') => {
+        self.show_errors = !self.show_errors;
       },
-      KeyCode::Char('h') => {
-        self.highlight_errors = !self.highlight_errors;
+      KeyCode::Char('w') => {
+        self.show_warnings = !self.show_warnings;
+      },
+      KeyCode::Char('i') => {
+        self.show_info = !self.show_info;
+      },
+      KeyCode::Char('d') => {
+        self.show_debug = !self.show_debug;
+      },
+      KeyCode::Char('r') => {
+        self.show_trace = !self.show_trace;
       },
       _ => {},
     }
   }
 
-  fn on_mouse(&mut self, _me: crossterm::event::MouseEvent) {}
+  fn on_mouse(&mut self, _me: crossterm::event::MouseEvent) {
+    // no-op
+  }
 }

@@ -37,4 +37,5 @@ color-eyre = "0.6.3"
 crossterm = "0.28.1"
 ratatui = { version = "0.28", features = ["all-widgets", "crossterm"] }
 crossbeam-channel.workspace = true
+rand = "0.8"
 
