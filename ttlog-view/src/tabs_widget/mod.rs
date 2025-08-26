@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 
+use crate::widget::Widget;
 use ratatui::{
   layout::Rect,
   style::{Color, Modifier, Style},
@@ -31,13 +32,13 @@ impl ViewMode {
   }
 }
 
-use crate::widget::Widget;
 pub struct ListWidget {
-  pub id: usize,
+  pub id: u8,
   pub title: &'static str,
   pub items: [ViewMode; 2],
   pub selected: usize,
-  pub area: Option<Rect>, // keep track of where we were rendered
+  pub area: Option<Rect>,
+  pub focused: bool,
 }
 
 impl ListWidget {
@@ -48,58 +49,64 @@ impl ListWidget {
       items: [ViewMode::Overview, ViewMode::Logs],
       selected: 0,
       area: None,
+      focused: false,
     }
   }
 }
 
 impl Widget for ListWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect, focused: bool) {
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
     let tab_titles: Vec<Line> = self
       .items
       .iter()
       .map(|t| Line::from(format!(" {} ", t.as_str())))
       .collect();
 
-    // base style for unfocused
+    // base style for all tabs
     let base_style = Style::default().fg(Color::DarkGray);
 
-    // highlight style for selection (changes if focused)
-    let highlight_style = if focused {
+    // highlight style (selected tab)
+    let highlight_style = if self.focused {
       Style::default()
         .fg(Color::Black)
-        .bg(Color::Blue)
+        .bg(Color::Blue) // blue background when focused
         .add_modifier(Modifier::BOLD)
     } else {
-      Style::default().fg(Color::Gray).bg(Color::Reset)
+      Style::default()
+        .fg(Color::White)
+        .bg(Color::DarkGray) // still give it a background when not focused
+        .add_modifier(Modifier::BOLD)
     };
 
-    // border style also changes depending on focus
+    // border style changes with focus
     let block = Block::default()
       .borders(Borders::ALL)
       .title(self.title)
       .border_type(BorderType::Rounded)
-      .border_style(if focused {
-        Style::default().fg(Color::LightBlue)
+      .border_style(if self.focused {
+        Style::default().fg(Color::Cyan)
       } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::White)
       });
 
     let tabs = T::new(tab_titles)
       .block(block)
-      .select(self.selected) // now controlled by on_key
+      .select(self.selected)
       .style(base_style)
-      .highlight_style(highlight_style);
+      .highlight_style(highlight_style); // applies to the *whole tab*, not just text
 
-    // self.width = tabs;
     f.render_widget(tabs, area);
   }
 
   fn on_key(&mut self, key: KeyEvent) {
+    if !self.focused {
+      return;
+    }
     match key.code {
-      KeyCode::Tab => {
+      KeyCode::Char('l') => {
         self.selected = (self.selected + 1) % self.items.len();
       },
-      KeyCode::BackTab => {
+      KeyCode::Char('h') => {
         self.selected = (self.selected + self.items.len() - 1) % self.items.len();
       },
       _ => {},

@@ -1,3 +1,4 @@
+use crossterm::event::KeyCode;
 use ratatui::{
   layout::{Alignment, Rect},
   style::Modifier,
@@ -18,8 +19,8 @@ pub struct LogEntry {
 }
 
 pub struct LogsWidget {
-  id: u8,
-  title: &'static str,
+  pub id: u8,
+  pub title: &'static str,
   pub logs: Vec<LogEntry>,
   pub search_query: String,
   pub sort_by: SortBy,
@@ -36,6 +37,7 @@ pub struct LogsWidget {
   pub bookmark_indices: Vec<usize>,
   pub show_help: bool,
   pub paused: bool,
+  pub focused: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,8 +56,8 @@ pub enum SortOrder {
 impl LogsWidget {
   pub fn new() -> Self {
     Self {
-      id: 2,
-      title: "System Logs",
+      id: 1,
+      title: "~ System Logs ~",
       logs: vec![
         LogEntry {
           timestamp: "2025-08-25 20:01:00".into(),
@@ -133,6 +135,7 @@ impl LogsWidget {
       bookmark_indices: Vec::new(),
       show_help: false,
       paused: false,
+      focused: false,
     }
   }
 
@@ -196,12 +199,12 @@ impl LogsWidget {
 
   fn get_level_color(level: &str) -> Color {
     match level {
-      "FATAL" | "CRITICAL" => Color::Magenta,
-      "ERROR" => Color::Red,
-      "WARN" | "WARNING" => Color::Yellow,
+      "FATAL" => Color::Red,
+      "ERROR" => Color::Magenta,
+      "WARN" => Color::Yellow,
       "INFO" => Color::Green,
-      "DEBUG" => Color::Blue,
-      "TRACE" => Color::Cyan,
+      "DEBUG" => Color::Cyan,
+      "TRACE" => Color::Gray,
       _ => Color::White,
     }
   }
@@ -236,16 +239,7 @@ impl LogsWidget {
   }
 
   fn build_title_line(&self, focused: bool) -> Line<'_> {
-    let data = self.filtered_and_sorted();
-    let total_logs = self.logs.len();
-    let filtered_logs = data.len();
-
     let title = format!(" {} ", self.title);
-    let count = if filtered_logs != total_logs {
-      format!(" ({}/{}) ", filtered_logs, total_logs)
-    } else {
-      format!(" ({}) ", total_logs)
-    };
 
     let status = self.get_status_indicators();
 
@@ -256,7 +250,6 @@ impl LogsWidget {
           .fg(if focused { Color::Cyan } else { Color::White })
           .add_modifier(Modifier::BOLD),
       ),
-      Span::styled(count, Style::default().fg(Color::Gray)),
       Span::styled(status, Style::default().fg(Color::Yellow)),
     ])
   }
@@ -291,6 +284,7 @@ impl LogsWidget {
       "Filter: All".to_string()
     };
 
+    spans.push(Span::styled("~", Style::default().fg(Color::White)));
     spans.push(Span::styled(
       format!(" {} ", search_status),
       Style::default().fg(if self.search_mode {
@@ -314,11 +308,14 @@ impl LogsWidget {
     if focused && !self.show_help {
       spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
       spans.push(Span::styled(
-        " [?] Help ",
+        " [?] Help",
         Style::default()
           .fg(Color::White)
           .add_modifier(Modifier::DIM),
       ));
+      spans.push(Span::styled(" ~", Style::default().fg(Color::White)));
+    } else {
+      spans.push(Span::styled("~", Style::default().fg(Color::White)));
     }
 
     Line::from(spans)
@@ -376,20 +373,19 @@ impl LogsWidget {
 }
 
 impl Widget for LogsWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect, focused: bool) {
-    let title_line = self.build_title_line(focused);
-    let control_line = self.build_control_line(focused);
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
+    let title_line = self.build_title_line(self.focused);
+    let control_line = self.build_control_line(self.focused);
 
     // Create title with two lines by chaining .title()
     let block = Block::default()
       .title(title_line)
-      .title(control_line)
       .border_type(BorderType::Rounded)
       .borders(Borders::ALL)
-      .border_style(if focused {
+      .border_style(if self.focused {
         Style::default().fg(Color::Cyan)
       } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(Color::White)
       });
 
     // Apply filter + sort
@@ -488,7 +484,7 @@ impl Widget for LogsWidget {
     let table = Table::new(rows, &constraints)
       .header(header)
       .block(block)
-      .highlight_style(if focused {
+      .highlight_style(if self.focused {
         Style::default()
           .add_modifier(Modifier::REVERSED)
           .fg(Color::Black)
@@ -515,10 +511,22 @@ impl Widget for LogsWidget {
     if self.show_help {
       self.render_help_popup(f, area);
     }
+
+    let total_text =
+      Paragraph::new(ratatui::text::Text::from(control_line)).alignment(Alignment::Right);
+    let total_rect = Rect {
+      x: area.x + (area.width / 2) - 10,
+      y: area.y,
+      width: area.width / 2 + 9,
+      height: 1,
+    };
+    f.render_widget(total_text, total_rect);
   }
 
   fn on_key(&mut self, key: crossterm::event::KeyEvent) {
-    use crossterm::event::{KeyCode, KeyModifiers};
+    if !self.focused {
+      return;
+    }
 
     // Handle help popup
     if self.show_help {

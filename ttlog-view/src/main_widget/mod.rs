@@ -1,14 +1,10 @@
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-
 use ratatui::{
-  layout::{Alignment, Constraint, Direction, Layout, Rect},
-  style::{Color, Modifier, Style},
+  layout::{Alignment, Rect},
+  style::{Color, Style},
   text::{Line, Span, Text},
-  widgets::{Block, BorderType, Borders, Paragraph, Tabs as T, Wrap},
+  widgets::{Block, Paragraph},
   Frame,
 };
-
-use crate::widget::Widget;
 
 pub struct MainWidget {
   pub id: usize,
@@ -17,7 +13,7 @@ pub struct MainWidget {
 
 impl MainWidget {
   pub fn new() -> Self {
-    Self { id: 0, title: "" }
+    Self { id: 00, title: "" }
   }
 
   pub fn render(&mut self, f: &mut Frame<'_>, b: &Block<'_>, area: Rect) {

@@ -1,10 +1,10 @@
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use crossterm::event::{KeyEvent, MouseEvent};
 
 use ratatui::{
   layout::{Constraint, Direction, Layout, Rect},
-  style::{Color, Modifier, Style},
-  text::{Line, Span, Text},
-  widgets::{Block, BorderType, Borders, Paragraph, Tabs as T, Wrap},
+  style::{Color, Style},
+  text::Span,
+  widgets::{Block, BorderType, Borders, Paragraph},
   Frame,
 };
 
@@ -17,6 +17,7 @@ pub struct StatsWidget {
   pub snapshot_count: u32,
   pub uptime: chrono::Duration,
   pub area: Option<Rect>,
+  pub focused: bool,
 }
 
 impl StatsWidget {
@@ -29,17 +30,22 @@ impl StatsWidget {
       log_rate: 100.0,
       log_count: 100,
       area: None,
+      focused: false,
     }
   }
 }
 
 impl Widget for StatsWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect, _focused: bool) {
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
     let block = Block::default()
       .title("TTLog Stats")
       .border_type(BorderType::Rounded)
       .borders(Borders::ALL)
-      .border_style(Style::default().fg(Color::Cyan));
+      .border_style(if self.focused {
+        Style::default().fg(Color::Cyan)
+      } else {
+        Style::default().fg(Color::White)
+      });
 
     // split horizontal space into 3 cols
     let chunks = Layout::default()

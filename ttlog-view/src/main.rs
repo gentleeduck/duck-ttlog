@@ -10,17 +10,15 @@ mod widget;
 
 use ratatui::{
   crossterm::event::{self, Event, KeyCode},
-  layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
+  layout::{Constraint, Direction, Layout, Margin},
   style::{Color, Style},
-  symbols::line::ROUNDED,
-  text::{Line, Span, Text},
-  widgets::{Block, BorderType, Borders, Paragraph},
+  widgets::{Block, BorderType, Borders},
   Frame,
 };
 
 use crate::{
   logs_graph_widget::LogsGraphWidget, logs_widget::LogsWidget, main_widget::MainWidget,
-  stats_widget::StatsWidget, tabs_widget::ListWidget, widget::Widget,
+  tabs_widget::ListWidget, widget::Widget,
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -31,12 +29,21 @@ fn main() -> color_eyre::Result<()> {
   result
 }
 
+struct AppState {
+  pub focused_widget: u8,
+}
+
 fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
+  let mut app_state = AppState { focused_widget: 0 };
   let mut main = MainWidget::new();
   let mut list = ListWidget::new();
   // let mut stats = StatsWidget::new();
   let mut logs = LogsWidget::new();
   let mut logs_graph = LogsGraphWidget::new();
+
+  list.focused = app_state.focused_widget == list.id;
+  logs.focused = app_state.focused_widget == logs.id;
+  logs_graph.focused = app_state.focused_widget == logs_graph.id;
 
   loop {
     terminal.draw(|f| reader_ui(f, &mut main, &mut list, &mut logs, &mut logs_graph))?;
@@ -44,15 +51,30 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
     if event::poll(std::time::Duration::from_millis(100))? {
       match event::read()? {
         // Global checking for q pressing to quite.
-        Event::Key(k) if matches!(k.code, KeyCode::Char('q')) => break Ok(()),
         Event::Key(k) => {
+          match k.code {
+            KeyCode::Char('q') => return Ok(()),
+            KeyCode::Tab => {
+              app_state.focused_widget = (app_state.focused_widget + 1) % 3;
+              list.focused = app_state.focused_widget == list.id;
+              logs.focused = app_state.focused_widget == logs.id;
+              logs_graph.focused = app_state.focused_widget == logs_graph.id;
+            },
+            KeyCode::BackTab => {
+              app_state.focused_widget = (app_state.focused_widget + 2) % 3;
+              list.focused = app_state.focused_widget == list.id;
+              logs.focused = app_state.focused_widget == logs.id;
+              logs_graph.focused = app_state.focused_widget == logs_graph.id;
+            },
+            _ => {},
+          }
           list.on_key(k);
-          // logs.on_key(k);
+          logs.on_key(k);
           logs_graph.on_key(k);
         },
         Event::Mouse(m) => {
           list.on_mouse(m);
-          // logs.on_mouse(m);
+          logs.on_mouse(m);
           logs_graph.on_mouse(m);
         },
         _ => {},
@@ -70,7 +92,7 @@ pub fn reader_ui(
 ) {
   let area = f.area();
 
-  let mut b = Block::default()
+  let b = Block::default()
     .title("") // we’ll render custom title manually
     .borders(Borders::ALL)
     .border_type(BorderType::Rounded)
@@ -100,7 +122,7 @@ pub fn reader_ui(
 
   main.render(f, &b, area);
 
-  list.render(f, first_layer[0], true);
-  logs.render(f, second_layer[0], true);
-  logs_graph.render(f, second_layer[1], true);
+  list.render(f, first_layer[0]);
+  logs.render(f, second_layer[0]);
+  logs_graph.render(f, second_layer[1]);
 }
