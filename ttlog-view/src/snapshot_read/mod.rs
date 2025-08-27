@@ -13,7 +13,7 @@ pub struct SnapshotFile {
 
 pub fn read_snapshots() -> Result<Vec<SnapshotFile>, Box<dyn Error>> {
   // Get the snapshots
-  let snapshots_dirs = fs::read_dir("/tmp")?
+  let snapshots_dirs = fs::read_dir("./tmp")?
     .filter_map(|e| e.ok())
     .filter(|e| e.file_name().to_string_lossy().starts_with("ttlog-"))
     .collect::<Vec<_>>();
@@ -28,7 +28,7 @@ pub fn read_snapshots() -> Result<Vec<SnapshotFile>, Box<dyn Error>> {
     let snapshot: SnapShot = serde_cbor::from_slice(&snapshot_decompressed)?;
     // Build data
     let path = dir.path().to_string_lossy().to_string();
-    let path = path.strip_prefix("/tmp/").unwrap();
+    let path = path.strip_prefix("./tmp/").unwrap();
     let chunks = path.split('-').collect::<Vec<_>>();
 
     let (_prefix, _pid, tsz, _suffix) = match chunks.as_slice() {
