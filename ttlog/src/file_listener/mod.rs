@@ -45,16 +45,22 @@ impl LogListener for FileListener {
 
       // Resolve strings
       let target_opt = interner.get_target(event.target_id);
-      let target = target_opt.as_deref().unwrap_or("unknown");
+      let target = match target_opt.as_deref() {
+        Some(v) => v,
+        None => "unknown",
+      };
 
       let message_opt = interner.get_message(match event.message_id {
         Some(v) => v.get(),
         None => {
-          eprintln!("[Trace] Unknown message id: {}", event.message_id.unwrap());
+          eprintln!("[Trace] Unknown message id: {:?}", event.message_id);
           return;
         },
       });
-      let message = message_opt.as_deref().unwrap_or("unknown");
+      let message = match message_opt.as_deref() {
+        Some(v) => v,
+        None => "unknown",
+      };
 
       // Format log line
       use std::fmt::Write;

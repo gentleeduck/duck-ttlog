@@ -22,24 +22,38 @@ impl StdoutListener {
 
 impl LogListener for StdoutListener {
   fn handle(&self, event: &LogEvent, interner: &StringInterner) {
-    // Fast format without allocating new strings
     if let Ok(mut buf) = self.buffer.try_lock() {
       buf.clear();
 
-      // Resolve strings once
+      // Resolve target
       let target_opt = interner.get_target(event.target_id);
-      let target = target_opt.as_deref().unwrap_or("unknown");
+      let target = match target_opt.as_deref() {
+        Some(v) => v,
+        None => "unknown",
+      };
 
-      let message_opt = interner.get_message(match event.message_id {
-        Some(v) => v.get(),
-        None => {
-          eprintln!("[Trace] Unknown message id: {}", event.message_id.unwrap());
-          return;
+      // FIX: Handle None message_id properly
+      let message: String = match event.message_id {
+        Some(id) => match interner.get_message(id.get()) {
+          Some(arc) => arc.to_string(),
+          None => "<unknown_message>".to_string(),
         },
-      });
-      let message = message_opt.as_deref().unwrap_or("unknown");
+        None => {
+          // For events without message, check if there's KV data
+          match event.kv_id {
+            Some(kv_id) => match interner.get_kv(kv_id.get()) {
+              Some(kv_data) => match std::str::from_utf8(kv_data.as_slice()) {
+                Ok(s) => s.to_string(),
+                Err(_) => "<binary_kv_data>".to_string(),
+              },
+              None => "<structured_data>".to_string(),
+            },
+            None => "<no_message>".to_string(),
+          }
+        },
+      };
 
-      // Fast format - no heap allocation
+      // Format log line
       use std::fmt::Write;
       let _ = write!(
         buf,
@@ -52,7 +66,6 @@ impl LogListener for StdoutListener {
       // Single write call
       let _ = io::stdout().write_all(buf.as_bytes());
     }
-    // If lock contention, just drop the event (performance over guarantees)
   }
 }
 

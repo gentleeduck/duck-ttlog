@@ -11,13 +11,14 @@ use crate::lf_buffer::LockFreeRingBuffer;
 use crate::listener::LogListener;
 use crate::panic_hook::PanicHook;
 use crate::snapshot::SnapshotWriter;
+use crate::stdout_listener;
 use crate::string_interner::StringInterner;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{self, AtomicU8, Ordering};
 
 #[derive(Debug)]
 pub enum Message {
-  SnapshotImmediate(&'static str),
+  SnapshotImmediate(String),
   FlushAndExit,
 }
 
@@ -67,7 +68,7 @@ impl Trace {
       snapshot_buffer,
       interner,
       listener_sender,
-      level: AtomicU8::new(LogLevel::ERROR as u8),
+      level: AtomicU8::new(LogLevel::WARN as u8), // Changed from ERROR to WARN
     }
   }
 
@@ -93,9 +94,29 @@ impl Trace {
     // Install panic hook before spawning writer thread
     PanicHook::install(sender.clone());
 
-    // Spawn writer thread with listener support
     let service_name = service_name.to_string();
-    let storage_path = storage_path.ok_or("").unwrap().to_string();
+    let storage_path: String = match storage_path {
+      Some(path) => path.to_string(),
+      None => "./tmp/".to_string(),
+    };
+
+    // Create the trace instance first
+    let trace = Trace::new(
+      sender,
+      listener_sender,
+      interner,
+      listener_buffer,
+      snapshot_buffer,
+    );
+
+    // Set the global logger BEFORE spawning the writer thread
+    GLOBAL_LOGGER.with(|logger_cell| match logger_cell.set(trace.clone()) {
+      Ok(_) => {
+        println!("GLOBAL_LOGGER initialized");
+      },
+      Err(_) => panic!("GLOBAL_LOGGER already initialized"),
+    });
+
     thread::spawn(move || {
       Self::writer_loop_with_listeners(
         receiver,
@@ -106,20 +127,9 @@ impl Trace {
         listener_buffer_clone,
         snapshot_buffer_clone,
         interner_clone,
-      )
+      );
     });
-
-    let trace = Trace::new(
-      sender,
-      listener_sender,
-      interner,
-      listener_buffer,
-      snapshot_buffer,
-    );
-    GLOBAL_LOGGER.with(|logger_cell| match logger_cell.set(trace.clone()) {
-      Ok(_) => {},
-      Err(_) => panic!("GLOBAL_LOGGER already initialized"),
-    });
+    thread::sleep(std::time::Duration::from_millis(10));
 
     trace
   }
@@ -136,18 +146,21 @@ impl Trace {
   pub fn shutdown(&self) {
     let _ = self.sender.try_send(Message::FlushAndExit);
     // Give the writer thread a moment to process the shutdown
-    thread::sleep(Duration::milliseconds(100).to_std().unwrap());
+    thread::sleep(Duration::milliseconds(120).to_std().unwrap());
   }
 
   pub fn get_sender(&self) -> Sender<Message> {
     self.sender.clone()
   }
 
-  pub fn request_snapshot(&self, reason: &'static str) {
-    eprintln!("[Snapshot Request] Captured snapshot request: {:?}", reason);
+  pub fn request_snapshot(&self, reason: impl Into<String>) {
+    // eprintln!("[Snapshot Request] Captured snapshot request: {:?}", reason);
 
     // non-blocking attempt to enqueue; do NOT block in Snapshot Request handler
-    if let Err(e) = self.sender.try_send(Message::SnapshotImmediate(reason)) {
+    if let Err(e) = self
+      .sender
+      .try_send(Message::SnapshotImmediate(reason.into()))
+    {
       eprintln!(
         "[Snapshot Request] Unable to enqueue snapshot request: {:?}",
         e
@@ -182,12 +195,6 @@ impl Trace {
     position: (u32, u32),
     kv_id: Option<num::NonZeroU16>,
   ) {
-    // Fast level check first
-    if log_level > self.level.load(Ordering::Relaxed) {
-      return;
-    }
-
-    // Create event directly on stack - no heap allocation
     let timestamp = SystemTime::now()
       .duration_since(UNIX_EPOCH)
       .unwrap_or_default()
@@ -206,7 +213,7 @@ impl Trace {
       kv_id,
     };
 
-    // Push to both buffers - listeners get real-time events, snapshots accumulate
+    // Push to both buffers
     self.listener_buffer.push_overwrite(event.clone());
     self.snapshot_buffer.push_overwrite(event);
   }
@@ -249,7 +256,7 @@ impl Trace {
 
             if !snapshot_buffer.is_empty() {
               if let Err(e) =
-                service.snapshot_and_write(&mut snapshot_buffer, reason, interner.clone())
+                service.snapshot_and_write(&mut snapshot_buffer, reason.clone(), interner.clone())
               {
                 eprintln!("[Snapshot] failed: {}", e);
               } else {
@@ -306,23 +313,25 @@ impl Trace {
 
       // Process log events for listeners - drain listener buffer
       let mut events_processed = 0;
-      while let Some(event) = listener_buffer.pop() {
-        // Fanout to all listeners - isolated panic handling
-        for listener in &listeners {
-          let result = std::panic::catch_unwind(|| {
-            listener.handle(&event, &interner);
-          });
+      if !listeners.is_empty() {
+        while let Some(event) = listener_buffer.pop() {
+          // Fanout to all listeners - isolated panic handling
+          for listener in &listeners {
+            let result = std::panic::catch_unwind(|| {
+              listener.handle(&event, &interner);
+            });
 
-          if result.is_err() {
-            eprintln!("[Trace] Listener panicked, continuing with others");
+            if result.is_err() {
+              eprintln!("[Trace] Listener panicked, continuing with others");
+            }
           }
-        }
 
-        events_processed += 1;
+          events_processed += 1;
 
-        // Batch processing - don't monopolize the thread
-        if events_processed >= 100 {
-          break;
+          // Batch processing - don't monopolize the thread
+          if events_processed >= 100 {
+            break;
+          }
         }
       }
 
@@ -339,7 +348,7 @@ impl Trace {
 
       // Small yield to prevent busy waiting when no events
       if events_processed == 0 {
-        thread::sleep(std::time::Duration::from_micros(100));
+        std::thread::yield_now(); // Just yield CPU slice, no fixed delay
       }
     }
   }

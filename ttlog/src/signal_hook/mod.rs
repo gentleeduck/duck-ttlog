@@ -48,7 +48,7 @@ impl SignalHook {
     eprintln!("[{}] Captured panic: {:?}", info, info);
 
     // non-blocking attempt to enqueue; do NOT block in panic handler
-    if let Err(e) = sender.try_send(Message::SnapshotImmediate("panic")) {
+    if let Err(e) = sender.try_send(Message::SnapshotImmediate("panic".to_string())) {
       eprintln!("[{}] Unable to enqueue snapshot request: {:?}", e, info);
     } else {
       eprintln!("[{}] Snapshot request enqueued", info);
