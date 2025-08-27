@@ -59,6 +59,67 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
     static FILE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
   };
 
+  let common_kv_code = quote! {
+    struct SmallVec(smallvec::SmallVec<[u8; 128]>);
+
+    impl SmallVec {
+      pub fn with_capacity(cap: usize) -> Self {
+        SmallVec(smallvec::SmallVec::with_capacity(cap))
+      }
+    }
+
+    impl std::io::Write for SmallVec {
+      fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(buf);
+        Ok(buf.len())
+      }
+
+      fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+      }
+    }
+
+
+    struct IntOrSer<'a, T>(&'a T);
+    
+    impl<'a, T> serde::Serialize for IntOrSer<'a, T>
+    where
+      T: serde::Serialize + 'static,
+    {
+      fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+      where
+        S: serde::Serializer,
+      {
+
+        // handle i64
+        if let Some(i) = (self.0 as &dyn std::any::Any).downcast_ref::<i64>() {
+          let mut buf = itoa::Buffer::new();
+          return serializer.serialize_str(buf.format(*i));
+        }
+    
+        // handle u64
+        if let Some(u) = (self.0 as &dyn std::any::Any).downcast_ref::<u64>() {
+          let mut buf = itoa::Buffer::new();
+          return serializer.serialize_str(buf.format(*u));
+        }
+
+        // handle f64
+        if let Some(f) = (self.0 as &dyn std::any::Any).downcast_ref::<f64>() {
+          let mut buf = ryu::Buffer::new();
+          return serializer.serialize_str(buf.format(*f));
+        }
+
+        // handle f32
+        if let Some(f) = (self.0 as &dyn std::any::Any).downcast_ref::<f32>() {
+          let mut buf = ryu::Buffer::new();
+          return serializer.serialize_str(buf.format(*f));
+        }
+    
+        self.0.serialize(serializer)
+      }
+    }
+  };
+
   match (parsed.message, parsed.kvs.is_empty()) {
     // Case 1: Simple message, no key-values - FASTEST PATH
     (Some(message), true) => {
@@ -114,7 +175,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
             if let Some(logger) = logger_cell.get() {
               if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
                 
-                // KV serialization code (same as before)...
+                #common_kv_code
                 let mut buf = SmallVec::with_capacity(128);
                 {
                   use serde::ser::{SerializeMap, Serializer};
@@ -153,7 +214,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
     // Case 3: No message, only key-values
     (None, false) => {
-      let kv_keys: Vec<_> = parsed.kvs.iter().map(|(k, _)| stringify!(k)).collect();
+      let kv_keys: Vec<_> = parsed.kvs.iter().map(|(_k, _)| stringify!(k)).collect();
       let kv_values = parsed.kvs.iter().map(|(_, v)| v);
       let num_kvs = parsed.kvs.len();
 
@@ -169,7 +230,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
             if let Some(logger) = logger_cell.get() {
               if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
                 
-                // KV serialization...
+                #common_kv_code
                 let mut buf = SmallVec::with_capacity(128);
                 {
                   use serde::ser::{SerializeMap, Serializer};

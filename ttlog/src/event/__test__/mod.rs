@@ -76,7 +76,7 @@ mod __test__ {
 
     event.packed_meta = LogEvent::pack_meta(timestamp, level, thread_id);
 
-    assert_eq!(event.timestamp_millis(), timestamp);
+    assert_eq!(event.timestamps(), timestamp);
     assert_eq!(event.level(), level);
     assert_eq!(event.thread_id(), thread_id);
   }

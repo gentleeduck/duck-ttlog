@@ -11,7 +11,6 @@ use crate::lf_buffer::LockFreeRingBuffer;
 use crate::listener::LogListener;
 use crate::panic_hook::PanicHook;
 use crate::snapshot::SnapshotWriter;
-use crate::stdout_listener;
 use crate::string_interner::StringInterner;
 use crossbeam_channel::Sender;
 use std::sync::atomic::{self, AtomicU8, Ordering};

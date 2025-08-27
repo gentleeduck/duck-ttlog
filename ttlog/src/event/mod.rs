@@ -98,7 +98,7 @@ pub struct LogEvent {
 
 impl LogEvent {
   #[inline]
-  pub fn timestamp_millis(&self) -> u64 {
+  pub fn timestamps(&self) -> u64 {
     self.packed_meta >> 12
   }
 

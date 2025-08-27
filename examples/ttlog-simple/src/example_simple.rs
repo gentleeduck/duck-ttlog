@@ -9,11 +9,9 @@ use ttlog::{
 pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   println!("TTLog Quick Start Example");
 
-  // Step 1: Initialize the tracing system
   let trace = Trace::init(4096, 64, "test", Some("./tmp"));
-
+  trace.add_listener(Arc::new(FileListener::new("./tmp/ttlog.log")?));
   trace.add_listener(Arc::new(ttlog::stdout_listener::StdoutListener::new()));
-  std::thread::sleep(std::time::Duration::from_millis(10));
 
   // Step 2: Use standard tracing macros to log
   trace!("Application started successfully");
@@ -27,9 +25,9 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   // Step 3: Log with structured data
   let user_id = 42;
   let username = "alice";
-  // info!(user_id = user_id, username = username, "User logged in");
+  info!(user_id = user_id, username = username, "User logged in");
 
-  // panic!("SIGINT received, shutting down!!");
+  panic!("SIGINT received, shutting down!!");
 
   Ok(())
 }
