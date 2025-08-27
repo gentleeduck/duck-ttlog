@@ -49,9 +49,9 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
   list.focused = app_state.focused_widget == list.id;
   logs.focused = app_state.focused_widget == logs.id;
   logs_graph.focused = app_state.focused_widget == logs_graph.id;
-  // snapshots.focused = app_state.focused_widget == snapshots.id;
-  // events_graph.focused = app_state.focused_widget == events_graph.id;
-  // system_info.focused = app_state.focused_widget == system_info.id;
+  snapshots.focused = app_state.focused_widget == snapshots.id;
+  events_graph.focused = app_state.focused_widget == events_graph.id;
+  system_info.focused = app_state.focused_widget == system_info.id;
 
   let mut rng = rand::thread_rng();
   loop {
@@ -79,35 +79,35 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
               list.focused = app_state.focused_widget == list.id;
               logs.focused = app_state.focused_widget == logs.id;
               logs_graph.focused = app_state.focused_widget == logs_graph.id;
-              // snapshots.focused = app_state.focused_widget == snapshots.id;
-              // events_graph.focused = app_state.focused_widget == events_graph.id;
-              // system_info.focused = app_state.focused_widget == system_info.id;
+              snapshots.focused = app_state.focused_widget == snapshots.id;
+              events_graph.focused = app_state.focused_widget == events_graph.id;
+              system_info.focused = app_state.focused_widget == system_info.id;
             },
             KeyCode::BackTab => {
               app_state.focused_widget = (app_state.focused_widget + 2) % 6;
               list.focused = app_state.focused_widget == list.id;
               logs.focused = app_state.focused_widget == logs.id;
               logs_graph.focused = app_state.focused_widget == logs_graph.id;
-              // snapshots.focused = app_state.focused_widget == snapshots.id;
-              // events_graph.focused = app_state.focused_widget == events_graph.id;
-              // system_info.focused = app_state.focused_widget == system_info.id;
+              snapshots.focused = app_state.focused_widget == snapshots.id;
+              events_graph.focused = app_state.focused_widget == events_graph.id;
+              system_info.focused = app_state.focused_widget == system_info.id;
             },
             _ => {},
           }
-          // list.on_key(k);
-          // logs.on_key(k);
-          // logs_graph.on_key(k);
-          // snapshots.on_key(k);
-          // events_graph.on_key(k);
-          // system_info.on_key(k);
+          list.on_key(k);
+          logs.on_key(k);
+          logs_graph.on_key(k);
+          snapshots.on_key(k);
+          events_graph.on_key(k);
+          system_info.on_key(k);
         },
         Event::Mouse(m) => {
-          // list.on_mouse(m);
-          // logs.on_mouse(m);
-          // logs_graph.on_mouse(m);
-          // snapshots.on_mouse(m);
-          // events_graph.on_mouse(m);
-          // system_info.on_mouse(m);
+          list.on_mouse(m);
+          logs.on_mouse(m);
+          logs_graph.on_mouse(m);
+          snapshots.on_mouse(m);
+          events_graph.on_mouse(m);
+          system_info.on_mouse(m);
         },
         _ => {},
       }
@@ -117,9 +117,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
     let events_per_sec = rng.gen_range(300000..800000);
 
     // call the tick
-    // events_graph.on_tick(events_per_sec);
-
-    std::thread::sleep(std::time::Duration::from_millis(1000));
+    events_graph.on_tick(events_per_sec);
   }
 }
 
@@ -179,7 +177,7 @@ pub fn reader_ui(
   logs_graph.render(f, lef_side_l_2[1]);
 
   // Render Right Side Widgets
-  // events_graph.render(f, right_side_l_1[0]);
-  // system_info.render(f, right_side_l_1[1]);
-  // snapshots.render(f, right_side_l_1[2]);
+  events_graph.render(f, right_side_l_1[0]);
+  system_info.render(f, right_side_l_1[1]);
+  snapshots.render(f, right_side_l_1[2]);
 }

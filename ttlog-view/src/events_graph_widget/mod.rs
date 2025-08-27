@@ -1,9 +1,8 @@
 use crossterm::event::{KeyEvent, MouseEvent};
-use rand::Rng; // sim for demo
 
 use ratatui::{
   layout::Rect,
-  style::{Color, Modifier, Style},
+  style::{Color, Style},
   symbols,
   text::Span,
   widgets::{Axis, Block, BorderType, Borders, Chart, Dataset, GraphType},

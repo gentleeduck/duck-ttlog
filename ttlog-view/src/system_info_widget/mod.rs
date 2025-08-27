@@ -53,5 +53,5 @@ impl Widget for SystemInfoWidget {
     }
   }
 
-  fn on_mouse(&mut self, me: MouseEvent) {}
+  fn on_mouse(&mut self, _me: MouseEvent) {}
 }
