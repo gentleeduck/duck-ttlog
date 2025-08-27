@@ -18,7 +18,7 @@ pub fn example_high_volume_logging() {
 
     if i % 2000 == 0 && i > 0 {
       // Take snapshot every 2000 items
-      trace_system.request_snapshot(&format!("batch_{}", i));
+      trace_system.request_snapshot(format!("batch_{}", i));
     }
   }
 

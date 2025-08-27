@@ -1,3 +1,4 @@
+use chrono::{DateTime, TimeZone, Utc};
 use crossterm::event::KeyCode;
 use ratatui::{
   layout::{Alignment, Rect},
@@ -8,20 +9,15 @@ use ratatui::{
   widgets::{Cell, Row, Table},
   Frame,
 };
+use smallvec::SmallVec;
+use ttlog::{event::LogLevel, snapshot::ResolvedEvent};
 
 use crate::widget::Widget;
-
-#[derive(Debug, Clone)]
-pub struct LogEntry {
-  pub timestamp: String,
-  pub level: String,
-  pub message: String,
-}
 
 pub struct LogsWidget {
   pub id: u8,
   pub title: &'static str,
-  pub logs: Vec<LogEntry>,
+  pub logs: Vec<ResolvedEvent>,
   pub search_query: String,
   pub sort_by: SortBy,
   pub sort_order: SortOrder,
@@ -54,72 +50,112 @@ pub enum SortOrder {
 }
 
 impl LogsWidget {
+  #[inline]
+  fn ev_timestamp_millis(ev: &ResolvedEvent) -> u64 {
+    ev.packed_meta >> 12
+  }
+
+  #[inline]
+  fn ev_level(ev: &ResolvedEvent) -> LogLevel {
+    // SAFETY: levels are encoded from a valid LogLevel repr u8
+    unsafe { std::mem::transmute(((ev.packed_meta >> 8) & 0xF) as u8) }
+  }
+
+  #[inline]
+  fn ev_thread_id(ev: &ResolvedEvent) -> u8 {
+    (ev.packed_meta & 0xFF) as u8
+  }
+
+  #[inline]
+  fn level_name(level: LogLevel) -> &'static str {
+    match level {
+      LogLevel::FATAL => "FATAL",
+      LogLevel::ERROR => "ERROR",
+      LogLevel::WARN => "WARN",
+      LogLevel::INFO => "INFO",
+      LogLevel::DEBUG => "DEBUG",
+      LogLevel::TRACE => "TRACE",
+    }
+  }
+
+  fn fmt_timestamp(ms: u64) -> String {
+    // Interpret as UNIX epoch millis in UTC
+    let secs = (ms / 1000) as i64;
+    let sub_ms = (ms % 1000) as u32;
+    let dt: DateTime<Utc> = Utc
+      .timestamp_opt(secs, sub_ms * 1_000_000)
+      .single()
+      .unwrap_or_else(|| Utc.timestamp_opt(0, 0).earliest().unwrap());
+    dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+  }
+
   pub fn new() -> Self {
+    let events = || {
+      let log_levels = [
+        LogLevel::ERROR,
+        LogLevel::WARN,
+        LogLevel::INFO,
+        LogLevel::DEBUG,
+        LogLevel::TRACE,
+        LogLevel::FATAL,
+      ];
+
+      (0..50)
+        .map(|i| {
+          let level = log_levels[i % log_levels.len()];
+          ResolvedEvent {
+            // synthetic packed_meta: timestamp in high bits, level in bits [8..12]
+            packed_meta: ((i as u64) << 12) | ((level as u64) << 8) | (i as u64),
+            message: format!(
+              "[{}] Simulated log message {}",
+              match level {
+                LogLevel::FATAL => "FATAL",
+                LogLevel::ERROR => "ERROR",
+                LogLevel::WARN => "WARN",
+                LogLevel::INFO => "INFO",
+                LogLevel::DEBUG => "DEBUG",
+                LogLevel::TRACE => "TRACE",
+              },
+              i
+            ),
+            target: format!(
+              "{}::module{}",
+              match level {
+                LogLevel::FATAL => "main",
+                LogLevel::ERROR => "service",
+                LogLevel::WARN => "controller",
+                LogLevel::INFO => "api",
+                LogLevel::DEBUG => "worker",
+                LogLevel::TRACE => "internal",
+              },
+              i % 3
+            ),
+            kv: Some(SmallVec::from_vec(vec![
+              (i % 255) as u8,
+              (i * 2 % 255) as u8,
+              (i * 3 % 255) as u8,
+            ])),
+            file: format!(
+              "{}.rs",
+              match level {
+                LogLevel::FATAL => "fatales",
+                LogLevel::ERROR => "errors",
+                LogLevel::WARN => "warnings",
+                LogLevel::INFO => "infos",
+                LogLevel::DEBUG => "debugs",
+                LogLevel::TRACE => "traces",
+              }
+            ),
+            position: (i as u32, (i * 7 % 100) as u32),
+          }
+        })
+        .collect()
+    };
+
     Self {
       id: 1,
-      title: "~ System Logs ~",
-      logs: vec![
-        LogEntry {
-          timestamp: "2025-08-25 20:01:00".into(),
-          level: "INFO".into(),
-          message: "Application startup sequence initiated. Loading configuration files from /etc/app/config and validating environment variables.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:05".into(),
-          level: "DEBUG".into(),
-          message: "Configuration loaded successfully: { database_url: postgres://user@localhost/db, redis_url: redis://127.0.0.1 }".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:10".into(),
-          level: "INFO".into(),
-          message: "Database connection established to host=localhost port=5432 dbname=main with connection pool size=15.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:15".into(),
-          level: "WARN".into(),
-          message: "Query execution exceeded expected threshold: SELECT * FROM users WHERE last_login IS NULL took 4521ms.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:20".into(),
-          level: "INFO".into(),
-          message: "Background scheduler started. Registered 4 recurring jobs: cleanup_temp_files, refresh_cache, sync_users, send_metrics.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:25".into(),
-          level: "ERROR".into(),
-          message: "Failed to fetch data from external API https://api.example.com/v1/items (HTTP 503 Service Unavailable). Retrying in 30s.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:30".into(),
-          level: "INFO".into(),
-          message: "Retrying API request... attempt=2 endpoint=https://api.example.com/v1/items params={limit=100, offset=0}.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:35".into(),
-          level: "DEBUG".into(),
-          message: "Cache lookup for key=session:43a7c12b-dfd2-4ad8-b51d returned hit. Expiration=3600s RemainingTTL=1782s.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:40".into(),
-          level: "INFO".into(),
-          message: "User login succeeded: user_id=42 username=alice ip=192.168.0.14 agent='Mozilla/5.0 (X11; Linux x86_64)'.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:45".into(),
-          level: "INFO".into(),
-          message: "Graceful shutdown requested. Flushing 37 pending log events, closing 12 DB connections, and terminating worker threads.".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:50".into(),
-          level: "TRACE".into(),
-          message: "Memory allocation: heap_size=256MB stack_size=2MB gc_cycles=42 allocations_per_second=1247".into(),
-        },
-        LogEntry {
-          timestamp: "2025-08-25 20:01:55".into(),
-          level: "FATAL".into(),
-          message: "Critical system failure: Out of memory. Cannot allocate 512MB for buffer. System unstable.".into(),
-        },
-      ],
+      title: "~ System Logs ~──",
+      logs: events(),
       search_query: String::new(),
       sort_by: SortBy::Time,
       sort_order: SortOrder::Descending,
@@ -139,22 +175,26 @@ impl LogsWidget {
     }
   }
 
-  fn filtered_and_sorted(&self) -> Vec<(usize, LogEntry)> {
-    let mut data: Vec<(usize, LogEntry)> = self.logs.iter().cloned().enumerate().collect();
+  fn filtered_and_sorted(&self) -> Vec<(usize, ResolvedEvent)> {
+    let mut data: Vec<(usize, ResolvedEvent)> = self.logs.iter().cloned().enumerate().collect();
 
     // 1. Apply level filter
     if let Some(level_filter) = &self.level_filter {
       let filter = level_filter.to_uppercase();
-      data.retain(|(_, e)| e.level == filter);
+      data.retain(|(_, e)| Self::level_name(Self::ev_level(e)) == filter);
     }
 
     // 2. Apply search filter
     if !self.search_query.is_empty() {
       let query = self.search_query.to_lowercase();
       data.retain(|(_, e)| {
-        e.timestamp.to_lowercase().contains(&query)
-          || e.level.to_lowercase().contains(&query)
+        let ts = Self::fmt_timestamp(Self::ev_timestamp_millis(e)).to_lowercase();
+        let lvl = Self::level_name(Self::ev_level(e)).to_lowercase();
+        ts.contains(&query)
+          || lvl.contains(&query)
           || e.message.to_lowercase().contains(&query)
+          || e.target.to_lowercase().contains(&query)
+          || e.file.to_lowercase().contains(&query)
       });
     }
 
@@ -162,16 +202,18 @@ impl LogsWidget {
     match self.sort_by {
       SortBy::Time => {
         if self.sort_order == SortOrder::Ascending {
-          data.sort_by(|a, b| a.1.timestamp.cmp(&b.1.timestamp));
+          data
+            .sort_by(|a, b| Self::ev_timestamp_millis(&a.1).cmp(&Self::ev_timestamp_millis(&b.1)));
         } else {
-          data.sort_by(|a, b| b.1.timestamp.cmp(&a.1.timestamp));
+          data
+            .sort_by(|a, b| Self::ev_timestamp_millis(&b.1).cmp(&Self::ev_timestamp_millis(&a.1)));
         }
       },
       SortBy::Level => {
         if self.sort_order == SortOrder::Ascending {
-          data.sort_by(|a, b| a.1.level.cmp(&b.1.level));
+          data.sort_by(|a, b| (Self::ev_level(&a.1) as u8).cmp(&(Self::ev_level(&b.1) as u8)));
         } else {
-          data.sort_by(|a, b| b.1.level.cmp(&a.1.level));
+          data.sort_by(|a, b| (Self::ev_level(&b.1) as u8).cmp(&(Self::ev_level(&a.1) as u8)));
         }
       },
       SortBy::Message => {
@@ -197,15 +239,14 @@ impl LogsWidget {
     }
   }
 
-  fn get_level_color(level: &str) -> Color {
+  fn get_level_color(level: LogLevel) -> Color {
     match level {
-      "FATAL" => Color::Red,
-      "ERROR" => Color::Magenta,
-      "WARN" => Color::Yellow,
-      "INFO" => Color::Green,
-      "DEBUG" => Color::Cyan,
-      "TRACE" => Color::Gray,
-      _ => Color::White,
+      LogLevel::FATAL => Color::Red,
+      LogLevel::ERROR => Color::Magenta,
+      LogLevel::WARN => Color::Yellow,
+      LogLevel::INFO => Color::Green,
+      LogLevel::DEBUG => Color::Cyan,
+      LogLevel::TRACE => Color::Gray,
     }
   }
 
@@ -234,12 +275,12 @@ impl LogsWidget {
     if indicators.is_empty() {
       String::new()
     } else {
-      format!(" {} ", indicators.join(" "))
+      format!("~ {} ~", indicators.join(" "))
     }
   }
 
   fn build_title_line(&self, focused: bool) -> Line<'_> {
-    let title = format!(" {} ", self.title);
+    let title = format!(" {}", self.title);
 
     let status = self.get_status_indicators();
 
@@ -395,7 +436,11 @@ impl Widget for LogsWidget {
     let rows: Vec<Row> = data
       .iter()
       .map(|(original_idx, log)| {
-        let level_color = Self::get_level_color(&log.level);
+        let level = Self::ev_level(log);
+        let level_name = Self::level_name(level);
+        let level_color = Self::get_level_color(level);
+        let ts_str = Self::fmt_timestamp(Self::ev_timestamp_millis(log));
+        let th = Self::ev_thread_id(log);
         let is_bookmarked = self.bookmark_indices.contains(original_idx);
 
         let mut cells = Vec::new();
@@ -412,15 +457,15 @@ impl Widget for LogsWidget {
 
         // Timestamp (if enabled)
         if self.show_timestamps {
-          cells.push(Cell::from(log.timestamp.clone()).style(Style::default().fg(Color::Gray)));
+          cells.push(Cell::from(ts_str).style(Style::default().fg(Color::Gray)));
         }
 
         // Level (if enabled)
         if self.show_levels {
           let level_text = if is_bookmarked {
-            format!("🔖{}", log.level)
+            format!("🔖{}", level_name)
           } else {
-            log.level.clone()
+            level_name.to_string()
           };
           cells.push(
             Cell::from(level_text).style(
@@ -431,13 +476,23 @@ impl Widget for LogsWidget {
           );
         }
 
+        // Thread id column
+        cells.push(Cell::from(format!("{}", th)).style(Style::default().fg(Color::DarkGray)));
+
         // Message
-        let message = if self.wrap_lines && log.message.len() > 50 {
+        let mut message = if self.wrap_lines && log.message.len() > 50 {
           format!("{}...", &log.message[..47])
         } else {
           log.message.clone()
         };
+        // Prefix file:line
+        let (line, col) = (log.position.0, log.position.1);
+        let prefix = format!("{}:{}:{} ", log.file, line, col);
+        message = format!("{}{}", prefix, message);
         cells.push(Cell::from(message).style(Style::default().fg(Color::White)));
+
+        // Target column
+        cells.push(Cell::from(log.target.clone()).style(Style::default().fg(Color::Gray)));
 
         Row::new(cells)
       })
@@ -453,9 +508,14 @@ impl Widget for LogsWidget {
       constraints.push(ratatui::layout::Constraint::Length(20));
     }
     if self.show_levels {
-      constraints.push(ratatui::layout::Constraint::Length(10));
+      constraints.push(ratatui::layout::Constraint::Length(4));
     }
-    constraints.push(ratatui::layout::Constraint::Min(10));
+    // Thread id
+    constraints.push(ratatui::layout::Constraint::Length(6));
+    // Message (with file:line prefix)
+    constraints.push(ratatui::layout::Constraint::Min(20));
+    // Target
+    constraints.push(ratatui::layout::Constraint::Length(18));
 
     // Build dynamic header (own the strings to avoid temporary borrow issues)
     let mut header_cells: Vec<Cell> = Vec::new();
@@ -470,10 +530,12 @@ impl Widget for LogsWidget {
       let s = format!("Level{}", self.get_sort_indicator(SortBy::Level));
       header_cells.push(Cell::from(s));
     }
+    header_cells.push(Cell::from("Thread"));
     {
       let s = format!("Message{}", self.get_sort_indicator(SortBy::Message));
       header_cells.push(Cell::from(s));
     }
+    header_cells.push(Cell::from("Target"));
 
     let header = Row::new(header_cells).style(
       Style::default()

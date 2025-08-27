@@ -56,7 +56,7 @@ fn batch_process_with_snapshots(trace_system: &Trace, batch_size: usize, total_i
     // Take snapshot at batch boundaries
     if i > 0 && i % batch_size == 0 {
       info!("Completed batch: {} items processed", i);
-      trace_system.request_snapshot(&format!("batch_checkpoint_{}", i));
+      trace_system.request_snapshot(format!("batch_checkpoint_{}", i));
     }
 
     // Simulate processing time

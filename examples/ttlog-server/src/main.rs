@@ -61,7 +61,7 @@ impl WebServer {
       if request_id % 20 == 0 {
         self
           .trace_system
-          .request_snapshot(&format!("batch_{}", request_id));
+          .request_snapshot(format!("batch_{}", request_id));
       }
 
       // Simulate request processing time
