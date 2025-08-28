@@ -1,48 +1,28 @@
-use chrono::{DateTime, Utc};
-use crossterm::event::KeyCode;
+use chrono::{DateTime, TimeZone, Utc};
+use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
-  style::Modifier,
-  style::{Color, Style},
-  text::{Line, Span},
-  widgets::{Block, BorderType, Borders, Clear, Paragraph},
-  widgets::{Cell, Row, Table, TableState},
+  style::{Color, Modifier, Style},
+  text::{Line, Span, Text},
+  widgets::{
+    Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Table, TableState,
+  },
   Frame,
 };
-
-use crate::{
-  logs_widget::LogsWidget,
-  snapshot_read::{read_snapshots, SnapshotFile},
-  widget::Widget,
+use smallvec::SmallVec;
+use ttlog::{
+  event::LogLevel,
+  snapshot::{ResolvedEvent, SnapShot},
 };
 
-pub struct SnapshotWidget {
-  pub id: u8,
-  pub title: &'static str,
-  pub logs: Vec<SnapshotFile>,
-  pub area: Option<Rect>,
-  pub search_query: String,
-  pub sort_by: SortBy,
-  pub sort_order: SortOrder,
-  pub selected: usize,
-  pub search_mode: bool,
-  pub auto_scroll: bool,
-  pub show_help: bool,
-  pub paused: bool,
-  pub focused: bool,
-
-  // Popover state
-  pub show_log_popover: bool,
-  pub pop_selected: usize,
-  pub pop_table_state: TableState,
-  pub evnets_widget: LogsWidget,
-}
+use crate::{snapshot_read::SnapshotFile, widget::Widget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortBy {
   Name,
   Path,
-  CreatedAt,
+  CreateTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,79 +31,143 @@ pub enum SortOrder {
   Descending,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ViewState {
+  Normal,
+  Search,
+  Help,
+  SnapshotDetail,
+}
+
+pub struct SnapshotWidget {
+  // Core data
+  pub id: u8,
+  pub title: &'static str,
+  pub snapshots: Vec<SnapshotFile>,
+
+  // State
+  pub view_state: ViewState,
+  pub focused: bool,
+  pub paused: bool,
+
+  // Selection and navigation
+  pub selected_row: usize,
+  pub scroll_offset: u16,
+
+  // Search and filtering
+  pub search_query: String,
+  pub sort_by: SortBy,
+  pub sort_order: SortOrder,
+
+  // View options
+  pub show_timestamps: bool,
+  pub show_line_numbers: bool,
+  pub wrap_lines: bool,
+  pub follow_tail: bool,
+  pub auto_scroll: bool,
+
+  // Bookmarks
+  pub bookmarks: Vec<usize>,
+
+  // UI state
+  pub area: Option<Rect>,
+  pub table_state: TableState,
+}
+
 impl SnapshotWidget {
   pub fn new() -> Self {
-    let snapshots: Vec<SnapshotFile> = read_snapshots().unwrap_or_default();
-
-    let mut ts = TableState::default();
-    ts.select(Some(0));
-
-    Self {
+    let mut widget = Self {
       id: 5,
-      title: "~ Snapshots ~──",
-      logs: snapshots,
-      area: None,
-      search_query: String::new(),
-      sort_by: SortBy::CreatedAt,
-      sort_order: SortOrder::Descending,
-      selected: 0,
-      search_mode: false,
-      auto_scroll: true,
-      show_help: false,
-      paused: false,
+      title: "~ System Snapshots ~──",
+      snapshots: crate::snapshot_read::read_snapshots().unwrap_or_default(),
+      view_state: ViewState::Normal,
       focused: false,
-      show_log_popover: false,
-      pop_selected: 0,
-      pop_table_state: ts,
-      evnets_widget: LogsWidget::new(),
-    }
+      paused: false,
+      selected_row: 0,
+      scroll_offset: 0,
+      search_query: String::new(),
+      sort_by: SortBy::CreateTime,
+      sort_order: SortOrder::Descending,
+      show_timestamps: true,
+      show_line_numbers: false,
+      wrap_lines: false,
+      follow_tail: false,
+      auto_scroll: true,
+      bookmarks: Vec::new(),
+      area: None,
+      table_state: TableState::default(),
+    };
+
+    widget.table_state.select(Some(0));
+    widget
   }
 
-  /// Return filtered + sorted list of `(idx, SnapshotFile)` pairs
-  fn filtered_and_sorted(&self) -> Vec<(usize, SnapshotFile)> {
-    let mut data: Vec<(usize, SnapshotFile)> = self.logs.clone().into_iter().enumerate().collect();
+  fn format_timestamp(timestamp_str: &str) -> String {
+    // Assume the timestamp is already formatted, or parse and reformat if needed
+    timestamp_str.to_string()
+  }
 
-    // Search filter: check name, path, create_at, or debug of data
+  // Data processing
+  fn filtered_and_sorted_snapshots(&self) -> Vec<(usize, &SnapshotFile)> {
+    let mut filtered: Vec<(usize, &SnapshotFile)> = self
+      .snapshots
+      .iter()
+      .enumerate()
+      .filter(|(_, snapshot)| self.matches_filters(snapshot))
+      .collect();
+
+    self.sort_snapshots(&mut filtered);
+    filtered
+  }
+
+  fn matches_filters(&self, snapshot: &SnapshotFile) -> bool {
+    // Search filter
     if !self.search_query.is_empty() {
-      let q = self.search_query.to_lowercase();
-      data.retain(|(_, s)| {
-        let data_debug = format!("{:?}", &s.data).to_lowercase(); // may require Debug on SnapShot
-        s.name.to_lowercase().contains(&q)
-          || s.path.to_lowercase().contains(&q)
-          || s.create_at.to_lowercase().contains(&q)
-          || data_debug.contains(&q)
-      });
+      let query = self.search_query.to_lowercase();
+      return snapshot.name.to_lowercase().contains(&query)
+        || snapshot.path.to_lowercase().contains(&query)
+        || snapshot.create_at.to_lowercase().contains(&query);
     }
 
-    // Sorting
+    true
+  }
+
+  fn sort_snapshots(&self, snapshots: &mut Vec<(usize, &SnapshotFile)>) {
     match self.sort_by {
       SortBy::Name => {
-        if self.sort_order == SortOrder::Ascending {
-          data.sort_by(|a, b| a.1.name.cmp(&b.1.name));
-        } else {
-          data.sort_by(|a, b| b.1.name.cmp(&a.1.name));
-        }
+        snapshots.sort_by(|a, b| {
+          let cmp = a.1.name.cmp(&b.1.name);
+          if self.sort_order == SortOrder::Descending {
+            cmp.reverse()
+          } else {
+            cmp
+          }
+        });
       },
       SortBy::Path => {
-        if self.sort_order == SortOrder::Ascending {
-          data.sort_by(|a, b| a.1.path.cmp(&b.1.path));
-        } else {
-          data.sort_by(|a, b| b.1.path.cmp(&a.1.path));
-        }
+        snapshots.sort_by(|a, b| {
+          let cmp = a.1.path.cmp(&b.1.path);
+          if self.sort_order == SortOrder::Descending {
+            cmp.reverse()
+          } else {
+            cmp
+          }
+        });
       },
-      SortBy::CreatedAt => {
-        // using lexicographic order on the create_at string; replace with parsed datetime if desired
-        if self.sort_order == SortOrder::Ascending {
-          data.sort_by(|a, b| a.1.create_at.cmp(&b.1.create_at));
-        } else {
-          data.sort_by(|a, b| b.1.create_at.cmp(&a.1.create_at));
-        }
+      SortBy::CreateTime => {
+        snapshots.sort_by(|a, b| {
+          let cmp = a.1.create_at.cmp(&b.1.create_at);
+          if self.sort_order == SortOrder::Descending {
+            cmp.reverse()
+          } else {
+            cmp
+          }
+        });
       },
     }
-
-    data
   }
 
+  // UI State management
   fn get_sort_indicator(&self, column: SortBy) -> &str {
     if self.sort_by == column {
       match self.sort_order {
@@ -135,29 +179,189 @@ impl SnapshotWidget {
     }
   }
 
-  fn get_status_indicators(&self) -> String {
+  fn get_status_indicators(&self) -> Vec<&str> {
     let mut indicators = Vec::new();
+
     if self.paused {
       indicators.push("⏸");
     }
     if self.auto_scroll {
       indicators.push("📜");
     }
-    if indicators.is_empty() {
-      String::new()
-    } else {
-      format!("~ {} ~", indicators.join(" "))
+    if self.follow_tail {
+      indicators.push("👁");
+    }
+    if self.wrap_lines {
+      indicators.push("↩");
+    }
+    if self.show_line_numbers {
+      indicators.push("#");
+    }
+    if !self.bookmarks.is_empty() {
+      indicators.push("🔖");
+    }
+
+    indicators
+  }
+
+  // Navigation
+  fn move_cursor_up(&mut self) {
+    if self.selected_row > 0 {
+      self.selected_row -= 1;
     }
   }
 
-  fn build_title_line(&self, focused: bool) -> Line<'_> {
+  fn move_cursor_down(&mut self) {
+    let filtered_count = self.filtered_and_sorted_snapshots().len();
+    if filtered_count > 0 && self.selected_row + 1 < filtered_count {
+      self.selected_row += 1;
+    }
+  }
+
+  fn page_up(&mut self) {
+    self.selected_row = self.selected_row.saturating_sub(10);
+  }
+
+  fn page_down(&mut self) {
+    let filtered_count = self.filtered_and_sorted_snapshots().len();
+    if filtered_count > 0 {
+      self.selected_row = (self.selected_row + 10).min(filtered_count - 1);
+    }
+  }
+
+  fn go_to_top(&mut self) {
+    self.selected_row = 0;
+  }
+
+  fn go_to_bottom(&mut self) {
+    let filtered_count = self.filtered_and_sorted_snapshots().len();
+    if filtered_count > 0 {
+      self.selected_row = filtered_count - 1;
+    }
+  }
+
+  // Popup scrolling
+  fn scroll_popup_up(&mut self) {
+    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+  }
+
+  fn scroll_popup_down(&mut self) {
+    self.scroll_offset = self.scroll_offset.saturating_add(1);
+  }
+
+  fn scroll_popup_page_up(&mut self) {
+    self.scroll_offset = self.scroll_offset.saturating_sub(10);
+  }
+
+  fn scroll_popup_page_down(&mut self) {
+    self.scroll_offset = self.scroll_offset.saturating_add(10);
+  }
+
+  fn scroll_popup_to_top(&mut self) {
+    self.scroll_offset = 0;
+  }
+
+  fn scroll_popup_to_bottom(&mut self) {
+    if let Some(content_height) = self.get_popup_content_height() {
+      self.scroll_offset = content_height.saturating_sub(1);
+    }
+  }
+
+  fn get_popup_content_height(&self) -> Option<u16> {
+    let snapshots = self.filtered_and_sorted_snapshots();
+    if let Some((_, snapshot)) = snapshots.get(self.selected_row) {
+      let json_content = serde_json::to_string_pretty(&snapshot.data).ok()?;
+      Some(json_content.lines().count() as u16)
+    } else {
+      None
+    }
+  }
+
+  // Actions
+  fn toggle_bookmark(&mut self) {
+    let snapshots = self.filtered_and_sorted_snapshots();
+    if let Some((original_idx, _)) = snapshots.get(self.selected_row) {
+      if let Some(pos) = self.bookmarks.iter().position(|&x| x == *original_idx) {
+        self.bookmarks.remove(pos);
+      } else {
+        self.bookmarks.push(*original_idx);
+      }
+    }
+  }
+
+  fn jump_to_next_bookmark(&mut self) {
+    if self.bookmarks.is_empty() {
+      return;
+    }
+
+    // Collect indices first to avoid holding a borrow of `self` while mutating selection
+    let indices: Vec<usize> = self
+      .filtered_and_sorted_snapshots()
+      .into_iter()
+      .map(|(original_idx, _)| original_idx)
+      .collect();
+    let mut found = false;
+
+    // Look for next bookmark after current position
+    for (i, original_idx) in indices.iter().enumerate() {
+      if self.bookmarks.contains(original_idx) && i > self.selected_row {
+        self.selected_row = i;
+        found = true;
+        break;
+      }
+    }
+
+    // If not found, wrap to first bookmark
+    if !found {
+      for (i, original_idx) in indices.iter().enumerate() {
+        if self.bookmarks.contains(original_idx) {
+          self.selected_row = i;
+          break;
+        }
+      }
+    }
+  }
+
+  fn cycle_sort_column(&mut self) {
+    self.sort_by = match self.sort_by {
+      SortBy::Name => SortBy::Path,
+      SortBy::Path => SortBy::CreateTime,
+      SortBy::CreateTime => SortBy::Name,
+    };
+  }
+
+  fn toggle_sort_order(&mut self) {
+    self.sort_order = match self.sort_order {
+      SortOrder::Ascending => SortOrder::Descending,
+      SortOrder::Descending => SortOrder::Ascending,
+    };
+  }
+
+  fn clear_all_filters(&mut self) {
+    self.search_query.clear();
+    self.sort_by = SortBy::CreateTime;
+    self.sort_order = SortOrder::Descending;
+  }
+
+  // Rendering helpers
+  fn build_title_line(&self) -> Line<'_> {
     let title = format!(" {}", self.title);
-    let status = self.get_status_indicators();
+    let status_indicators = self.get_status_indicators();
+    let status = if status_indicators.is_empty() {
+      String::new()
+    } else {
+      format!(" ~ {} ~", status_indicators.join(" "))
+    };
+
     Line::from(vec![
       Span::styled(
         title,
         Style::default()
-          .fg(if focused { Color::Cyan } else { Color::White })
+          .fg(if self.focused {
+            Color::Cyan
+          } else {
+            Color::White
+          })
           .add_modifier(Modifier::BOLD),
       ),
       Span::styled(status, Style::default().fg(Color::Yellow)),
@@ -166,45 +370,148 @@ impl SnapshotWidget {
 
   fn build_control_line(&self) -> Line<'_> {
     let mut spans = Vec::new();
-    let search_status = if self.search_mode {
-      format!("🔍 {}_", self.search_query)
-    } else if !self.search_query.is_empty() {
-      format!("🔍 {}", self.search_query)
-    } else {
-      "Search: None".to_string()
+
+    // Search status
+    let search_text = match self.view_state {
+      ViewState::Search => format!("🔍 {}_", self.search_query),
+      _ if !self.search_query.is_empty() => format!("🔍 {}", self.search_query),
+      _ => "Search: None".to_string(),
     };
 
-    let sort_info = format!(
+    // Sort info
+    let sort_text = format!(
       "Sort: {}{}",
       match self.sort_by {
         SortBy::Name => "Name",
         SortBy::Path => "Path",
-        SortBy::CreatedAt => "CreatedAt",
+        SortBy::CreateTime => "Time",
       },
       self.get_sort_indicator(self.sort_by)
     );
 
-    spans.push(Span::styled("~", Style::default().fg(Color::White)));
-    spans.push(Span::styled(
-      format!(" {} ", search_status),
-      Style::default().fg(if self.search_mode {
-        Color::Yellow
-      } else {
-        Color::Gray
-      }),
-    ));
-    spans.push(Span::styled("│", Style::default().fg(Color::DarkGray)));
-    spans.push(Span::styled(
-      format!(" {} ", sort_info),
-      Style::default().fg(Color::Cyan),
-    ));
-    spans.push(Span::styled(" ~", Style::default().fg(Color::White)));
+    spans.extend([
+      Span::styled("~", Style::default().fg(Color::White)),
+      Span::styled(
+        format!(" {} ", search_text),
+        Style::default().fg(if self.view_state == ViewState::Search {
+          Color::Yellow
+        } else {
+          Color::Gray
+        }),
+      ),
+      Span::styled("│", Style::default().fg(Color::DarkGray)),
+      Span::styled(format!(" {} ", sort_text), Style::default().fg(Color::Cyan)),
+    ]);
 
+    if self.focused && self.view_state == ViewState::Normal {
+      spans.extend([
+        Span::styled("│", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+          " [?] Help",
+          Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::DIM),
+        ),
+      ]);
+    }
+
+    spans.push(Span::styled(" ~", Style::default().fg(Color::White)));
     Line::from(spans)
   }
 
-  // Center helper (same approach used in your snapshot file)
-  fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+  fn build_table_constraints(&self) -> Vec<Constraint> {
+    let mut constraints = Vec::new();
+
+    if self.show_line_numbers {
+      constraints.push(Constraint::Length(6));
+    }
+    constraints.push(Constraint::Min(20)); // Name
+    constraints.push(Constraint::Min(30)); // Path
+    if self.show_timestamps {
+      constraints.push(Constraint::Length(20)); // Create Time
+    }
+
+    constraints
+  }
+
+  fn build_table_header(&self) -> Row<'_> {
+    let mut cells = Vec::new();
+
+    if self.show_line_numbers {
+      cells.push(Cell::from("#"));
+    }
+    cells.push(Cell::from(format!(
+      "Name{}",
+      self.get_sort_indicator(SortBy::Name)
+    )));
+    cells.push(Cell::from(format!(
+      "Path{}",
+      self.get_sort_indicator(SortBy::Path)
+    )));
+    if self.show_timestamps {
+      cells.push(Cell::from(format!(
+        "Created{}",
+        self.get_sort_indicator(SortBy::CreateTime)
+      )));
+    }
+
+    Row::new(cells).style(
+      Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD),
+    )
+  }
+
+  fn build_table_rows(&self) -> Vec<Row<'_>> {
+    let snapshots = self.filtered_and_sorted_snapshots();
+
+    snapshots
+      .iter()
+      .map(|(original_idx, snapshot)| {
+        let is_bookmarked = self.bookmarks.contains(original_idx);
+
+        let mut cells = Vec::new();
+
+        // Line number
+        if self.show_line_numbers {
+          let line_text = if is_bookmarked {
+            format!("🔖{}", original_idx + 1)
+          } else {
+            format!("{}", original_idx + 1)
+          };
+          cells.push(Cell::from(line_text).style(Style::default().fg(Color::DarkGray)));
+        }
+
+        // Name
+        let name_text = if is_bookmarked {
+          format!("🔖{}", snapshot.name)
+        } else {
+          snapshot.name.clone()
+        };
+        cells.push(Cell::from(name_text).style(Style::default().fg(Color::White)));
+
+        // Path
+        let path_text = if self.wrap_lines && snapshot.path.len() > 40 {
+          format!("{}...", &snapshot.path[..37])
+        } else {
+          snapshot.path.clone()
+        };
+        cells.push(Cell::from(path_text).style(Style::default().fg(Color::Cyan)));
+
+        // Create Time
+        if self.show_timestamps {
+          cells.push(
+            Cell::from(Self::format_timestamp(&snapshot.create_at))
+              .style(Style::default().fg(Color::Gray)),
+          );
+        }
+
+        Row::new(cells)
+      })
+      .collect()
+  }
+
+  fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let popup_layout = Layout::default()
       .direction(Direction::Vertical)
       .constraints([
@@ -212,7 +519,7 @@ impl SnapshotWidget {
         Constraint::Percentage(percent_y),
         Constraint::Percentage((100 - percent_y) / 2),
       ])
-      .split(r);
+      .split(area);
 
     Layout::default()
       .direction(Direction::Horizontal)
@@ -224,120 +531,83 @@ impl SnapshotWidget {
       .split(popup_layout[1])[1]
   }
 
-  /// Paint a dim background over `area` so the popup feels modal.
   fn render_dim_overlay(&self, f: &mut Frame<'_>, area: Rect) {
-    let dim = Block::default().style(Style::default().bg(Color::Black));
-    f.render_widget(dim, area);
+    let dim_block = Block::default().style(Style::default().bg(Color::Black));
+    f.render_widget(dim_block, area);
   }
 
-  fn format_timestamp(ts: &str) -> String {
-    // Try parsing as RFC3339 (ISO 8601, e.g. 2025-08-28T14:53:21Z)
-    if let Ok(dt) = DateTime::parse_from_rfc3339(ts) {
-      return dt
-        .with_timezone(&Utc)
-        .format("%Y-%m-%d %H:%M:%S")
-        .to_string();
-    }
+  fn render_snapshot_detail_popup(&self, f: &mut Frame<'_>, area: Rect) {
+    let snapshots = self.filtered_and_sorted_snapshots();
 
-    // fallback: show as-is
-    ts.to_string()
-  }
-
-  /// Render a popover showing details of the selected snapshot.
-  fn render_log_popover(&self, f: &mut Frame<'_>, area: Rect) {
-    let data = self.filtered_and_sorted();
-    if data.is_empty() {
-      let popup_area = Self::centered_rect(50, 20, area);
-      f.render_widget(Clear, popup_area);
-      let block = Block::default()
-        .title(" No snapshot ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Green));
-      let p = Paragraph::new("No snapshot selected")
-        .alignment(Alignment::Center)
-        .block(block);
-      f.render_widget(p, popup_area);
-      return;
-    }
-
-    let (_orig_idx, snap) = data.get(self.selected).unwrap();
-
-    // Big popover
-    let popup_area = Self::centered_rect(70, 50, area);
+    let popup_area = Self::centered_rect(80, 70, area);
     f.render_widget(Clear, popup_area);
 
-    let block = Block::default()
-      .title(format!(" Snapshot Detail "))
-      .title_alignment(Alignment::Center)
-      .border_type(BorderType::Double)
-      .borders(Borders::ALL)
-      .border_style(Style::default().fg(Color::Green));
+    if let Some((_, snapshot)) = snapshots.get(self.selected_row) {
+      let json_content = serde_json::to_string_pretty(&snapshot.data)
+        .unwrap_or_else(|_| "Failed to serialize snapshot data".to_string());
+      let total_lines = json_content.lines().count() as u16;
 
-    // Prepare content rows: Name, Path, CreatedAt, Data (truncated)
-    let header = Row::new(vec!["Field", "Value"]).style(
-      Style::default()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD),
-    );
+      let block = Block::default()
+        .title(format!(" Snapshot Data: {} ", snapshot.name))
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Green));
 
-    let mut rows: Vec<Row> = Vec::new();
-    rows.push(Row::new(vec![
-      Cell::from("Name"),
-      Cell::from(snap.name.clone()),
-    ]));
-    rows.push(Row::new(vec![
-      Cell::from("Path"),
-      Cell::from(snap.path.clone()),
-    ]));
-    rows.push(Row::new(vec![
-      Cell::from("Created At"),
-      Cell::from(SnapshotWidget::format_timestamp(&snap.create_at.clone())),
-    ]));
+      let paragraph = Paragraph::new(Text::from(json_content))
+        .block(block)
+        .scroll((self.scroll_offset, 0))
+        .alignment(Alignment::Left);
 
-    // Data debug/truncated
-    let data_text = format!("{:?}", &snap.data);
-    let data_trunc = if data_text.len() > 300 {
-      format!("{}...", &data_text[..297])
+      f.render_widget(paragraph, popup_area);
+
+      // Render scrollbar
+      let mut scrollbar_state =
+        ScrollbarState::new(total_lines as usize).position(self.scroll_offset as usize);
+      let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .thumb_style(Style::default().fg(Color::Green));
+      f.render_stateful_widget(scrollbar, popup_area, &mut scrollbar_state);
     } else {
-      data_text
-    };
-    rows.push(Row::new(vec![Cell::from("Data"), Cell::from(data_trunc)]));
-
-    let table = Table::new(rows, vec![Constraint::Length(14), Constraint::Min(20)])
-      .header(header)
-      .block(block)
-      .column_spacing(2)
-      .highlight_style(
-        Style::default()
-          .add_modifier(Modifier::REVERSED)
-          .fg(Color::Black)
-          .bg(Color::Cyan),
-      );
-
-    let mut ps = self.pop_table_state.clone();
-    let sel = Some(self.pop_selected.min(3)); // 4 rows (0..3)
-    ps.select(sel);
-
-    f.render_stateful_widget(table, popup_area, &mut ps);
+      let block = Block::default()
+        .title(" No Snapshot Selected ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Red));
+      let paragraph = Paragraph::new("No snapshot available")
+        .alignment(Alignment::Center)
+        .block(block);
+      f.render_widget(paragraph, popup_area);
+    }
   }
 
   fn render_help_popup(&self, f: &mut Frame<'_>, area: Rect) {
-    let help_text = vec![
-      "┌────────────────────────────── SNAPSHOT VIEWER HELP ───────────────────────┐",
-      "│   Navigation:                                                             │",
-      "│    ↑↓   Move cursor         │     View Options:                           │",
-      "│    PgUp/Dn Page up/dn       │      /     Search                            │",
-      "│    Home/End First/last      │      s     Sort column                       │",
-      "│   Search & Filter:          │                                             │",
-      "│    /     Search             │      ESC   Exit help                        │",
+    let help_text = [
+      "┌──────────────────────────── SNAPSHOT VIEWER HELP ─────────────────────────┐",
+      "│   Navigation:                 │     View Options:                         │",
+      "│    ↑↓      Move cursor        │      t     Toggle timestamps              │",
+      "│    PgUp/Dn Page up/down       │      w     Toggle wrap lines              │",
+      "│    Home/End First/last        │      #     Toggle line numbers            │",
+      "│    Enter   View snapshot data │      f     Toggle follow tail             │",
+      "│                               │      Space Toggle pause                   │",
+      "│   Search & Filter:            │                                           │",
+      "│    /       Start search       │     Sorting:                              │",
+      "│    n/N     Next/Prev result   │      s     Cycle sort column              │",
+      "│    c       Clear all filters  │      r     Reverse sort order             │",
+      "│                               │                                           │",
+      "│   Bookmarks:                  │     Other:                                │",
+      "│    b       Toggle bookmark    │      ?     Toggle this help               │",
+      "│    B       Jump to next       │      ESC   Close popups                   │",
+      "│                               │                                           │",
       "└───────────────────────────────────────────────────────────────────────────┘",
     ];
+
+    let help_height = help_text.len() as u16;
+    let help_width = 77;
 
     let popup_area = Layout::default()
       .direction(Direction::Vertical)
       .constraints([
-        Constraint::Length((area.height.saturating_sub(help_text.len() as u16)) / 2),
-        Constraint::Length(help_text.len() as u16),
+        Constraint::Length((area.height.saturating_sub(help_height - 1)) / 2),
+        Constraint::Length(help_height),
         Constraint::Min(0),
       ])
       .split(area)[1];
@@ -345,8 +615,8 @@ impl SnapshotWidget {
     let popup_area = Layout::default()
       .direction(Direction::Horizontal)
       .constraints([
-        Constraint::Length((area.width.saturating_sub(71)) / 2),
-        Constraint::Length(77),
+        Constraint::Length((area.width.saturating_sub(help_width)) / 2),
+        Constraint::Length(help_width),
         Constraint::Min(0),
       ])
       .split(popup_area)[1];
@@ -359,120 +629,81 @@ impl SnapshotWidget {
 
     f.render_widget(help_paragraph, popup_area);
   }
+
+  // Sample data generator removed: we now load real snapshots via `snapshot_read::read_snapshots()`.
 }
 
 impl Widget for SnapshotWidget {
   fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
     self.area = Some(area);
+    // Temporarily move out the table state to avoid borrowing conflicts
+    let mut table_state = std::mem::take(&mut self.table_state);
 
-    let title_line = self.build_title_line(self.focused);
+    // Compute filtered count and update local table_state selection
+    let filtered_count = self.filtered_and_sorted_snapshots().len();
+    if self.follow_tail && filtered_count > 0 {
+      table_state.select(Some(filtered_count - 1));
+    } else if filtered_count > 0 {
+      table_state.select(Some(self.selected_row.min(filtered_count - 1)));
+    } else {
+      table_state.select(None);
+    }
 
+    // Build the main block and table
+    let title_line = self.build_title_line();
     let block = Block::default()
       .title(title_line)
-      .border_type(BorderType::Rounded)
       .borders(Borders::ALL)
+      .border_type(BorderType::Rounded)
       .border_style(if self.focused {
         Style::default().fg(Color::Cyan)
       } else {
         Style::default().fg(Color::White)
       });
 
-    let data = self.filtered_and_sorted();
-
-    if data.is_empty() {
-      let empty_msg = Paragraph::new("No snapshots available")
-        .alignment(Alignment::Center)
-        .block(block.clone());
-      f.render_widget(empty_msg, area);
-      return;
-    }
-
-    let rows: Vec<Row> = data
-      .iter()
-      .map(|(_, snap)| {
-        let mut cells = Vec::new();
-
-        let name_display = if snap.name.len() > 30 {
-          format!("...{}", &snap.name[snap.name.len() - 28..])
-        } else {
-          snap.name.clone()
-        };
-
-        cells.push(Cell::from(name_display).style(Style::default().fg(Color::White)));
-
-        let path_display = if snap.path.len() > 45 {
-          format!("...{}", &snap.path[snap.path.len() - 27..])
-        } else {
-          snap.path.clone()
-        };
-        cells.push(Cell::from(path_display).style(Style::default().fg(Color::Gray)));
-
-        cells.push(
-          Cell::from(SnapshotWidget::format_timestamp(&snap.create_at.clone()))
-            .style(Style::default().fg(Color::DarkGray)),
-        );
-        Row::new(cells)
-      })
-      .collect();
-
-    let constraints = vec![
-      Constraint::Length(31),
-      Constraint::Length(50),
-      Constraint::Length(16),
-    ];
-
-    let header_cells = vec![
-      Cell::from(format!("Name{}", self.get_sort_indicator(SortBy::Name))),
-      Cell::from(format!("Path{}", self.get_sort_indicator(SortBy::Path))),
-      Cell::from(format!(
-        "Created{}",
-        self.get_sort_indicator(SortBy::CreatedAt)
-      )),
-    ];
-
-    let header = Row::new(header_cells).style(
-      Style::default()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD),
-    );
+    // Build table components
+    let constraints = self.build_table_constraints();
+    let header = self.build_table_header();
+    let rows = self.build_table_rows();
 
     let table = Table::new(rows, &constraints)
       .header(header)
       .block(block)
       .highlight_style(if self.focused {
-        Style::default()
-          .add_modifier(Modifier::REVERSED)
-          .fg(Color::Black)
-          .bg(Color::Cyan)
+        Style::default().fg(Color::Black).bg(Color::Cyan)
       } else {
-        Style::default()
-          .add_modifier(Modifier::REVERSED)
-          .fg(Color::Black)
-          .bg(Color::DarkGray)
+        Style::default().fg(Color::Black).bg(Color::Blue)
       });
 
-    let mut table_state = TableState::default();
-    table_state = table_state.with_selected(Some(self.selected.min(data.len().saturating_sub(1))));
-
+    // Render main table with the local table_state
     f.render_stateful_widget(table, area, &mut table_state);
 
-    if self.show_log_popover {
-      self.render_dim_overlay(f, area);
-      self.render_log_popover(f, area);
-    } else if self.show_help {
-      self.render_dim_overlay(f, area);
-      self.render_help_popup(f, area);
-    }
+    // Put the table state back
+    self.table_state = table_state;
 
-    let total_text = Paragraph::new(ratatui::text::Text::from(self.build_control_line()))
-      .alignment(Alignment::Right);
-    let total_rect = Rect {
-      x: area.x + (area.width / 2) - 10,
+    // Render control line
+    let control_line = self.build_control_line();
+    let control_paragraph = Paragraph::new(Text::from(control_line)).alignment(Alignment::Right);
+    let control_area = Rect {
+      x: area.x + (area.width / 2).saturating_sub(10),
       y: area.y,
-      width: area.width / 2 + 9,
+      width: area.width / 2 + 10,
       height: 1,
     };
-    f.render_widget(total_text, total_rect);
+    f.render_widget(control_paragraph, control_area);
+
+    // Render popups
+    match self.view_state {
+      ViewState::SnapshotDetail => {
+        self.render_dim_overlay(f, area);
+        self.render_snapshot_detail_popup(f, area);
+      },
+      ViewState::Help => {
+        self.render_dim_overlay(f, area);
+        self.render_help_popup(f, area);
+      },
+      _ => {},
+    }
   }
 
   fn on_key(&mut self, key: crossterm::event::KeyEvent) {
@@ -480,155 +711,117 @@ impl Widget for SnapshotWidget {
       return;
     }
 
-    // Popover navigation
-    if self.show_log_popover {
-      match key.code {
-        KeyCode::Esc => {
-          self.show_log_popover = false;
-        },
-        KeyCode::Up => {
-          if self.pop_selected > 0 {
-            self.pop_selected -= 1;
-          }
-        },
-        KeyCode::Down => {
-          self.pop_selected = (self.pop_selected + 1).min(3);
-        },
-        KeyCode::PageUp => {
-          self.pop_selected = self.pop_selected.saturating_sub(3);
-        },
-        KeyCode::PageDown => {
-          self.pop_selected = (self.pop_selected + 3).min(3);
-        },
-        KeyCode::Home => {
-          self.pop_selected = 0;
-        },
-        KeyCode::End => {
-          self.pop_selected = 3;
-        },
-        _ => {},
-      }
-      self.pop_table_state.select(Some(self.pop_selected));
-      return;
+    match self.view_state {
+      ViewState::SnapshotDetail => self.handle_snapshot_detail_keys(key),
+      ViewState::Help => self.handle_help_keys(key),
+      ViewState::Search => self.handle_search_keys(key),
+      ViewState::Normal => self.handle_normal_keys(key),
     }
+  }
 
-    // Help popup
-    if self.show_help {
-      match key.code {
-        KeyCode::Char('?') | KeyCode::Char('q') | KeyCode::Esc => {
-          self.show_help = false;
-        },
-        _ => {},
-      }
-      return;
-    }
+  fn on_mouse(&mut self, _event: MouseEvent) {
+    // Mouse handling can be implemented here if needed
+    // For now, we'll leave it empty but store the area for future use
+  }
+}
 
-    // Search mode
-    if self.search_mode {
-      match key.code {
-        KeyCode::Char(c) => {
-          self.search_query.push(c);
-        },
-        KeyCode::Backspace => {
-          self.search_query.pop();
-        },
-        KeyCode::Enter | KeyCode::Esc => {
-          self.search_mode = false;
-        },
-        _ => {},
-      }
-      return;
-    }
-
-    // Normal mode key handling
+// Key handling implementation
+impl SnapshotWidget {
+  fn handle_snapshot_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
     match key.code {
-      KeyCode::Char('?') => {
-        self.show_help = true;
+      KeyCode::Esc => {
+        self.view_state = ViewState::Normal;
+        self.scroll_offset = 0;
       },
-      KeyCode::Enter => {
-        if !self.filtered_and_sorted().is_empty() {
-          self.show_log_popover = true;
-          self.pop_selected = 0;
-          self.pop_table_state.select(Some(0));
-        }
-      },
-      KeyCode::Char('/') => {
-        self.search_mode = true;
-      },
-      KeyCode::Char('n') => {
-        if !self.search_query.is_empty() {
-          let filtered = self.filtered_and_sorted();
-          if self.selected + 1 < filtered.len() {
-            self.selected += 1;
-          }
-        }
-      },
-      KeyCode::Char('N') => {
-        if !self.search_query.is_empty() && self.selected > 0 {
-          self.selected -= 1;
-        }
-      },
-      KeyCode::Char('c') => {
-        self.search_query.clear();
-        self.sort_by = SortBy::CreatedAt;
-        self.sort_order = SortOrder::Descending;
-      },
-      // Cycle sort column
-      KeyCode::Char('s') => {
-        self.sort_by = match self.sort_by {
-          SortBy::Name => SortBy::Path,
-          SortBy::Path => SortBy::CreatedAt,
-          SortBy::CreatedAt => SortBy::Name,
-        };
-      },
-      // Reverse sort order
-      KeyCode::Char('r') => {
-        self.sort_order = match self.sort_order {
-          SortOrder::Ascending => SortOrder::Descending,
-          SortOrder::Descending => SortOrder::Ascending,
-        };
-      },
+      KeyCode::Up | KeyCode::Char('k') => self.scroll_popup_up(),
+      KeyCode::Down | KeyCode::Char('j') => self.scroll_popup_down(),
+      KeyCode::PageUp => self.scroll_popup_page_up(),
+      KeyCode::PageDown => self.scroll_popup_page_down(),
+      KeyCode::Home => self.scroll_popup_to_top(),
+      KeyCode::End => self.scroll_popup_to_bottom(),
+      _ => {},
+    }
+  }
 
-      // Pause toggle
-      KeyCode::Char(' ') => {
-        self.paused = !self.paused;
-      },
-
-      // Navigation
-      KeyCode::Down => {
-        let filtered_count = self.filtered_and_sorted().len();
-        if filtered_count > 0 {
-          self.selected = (self.selected + 1).min(filtered_count - 1);
-        }
-      },
-      KeyCode::Up => {
-        if self.selected > 0 {
-          self.selected -= 1;
-        }
-      },
-      KeyCode::Home | KeyCode::Char('g') => {
-        self.selected = 0;
-      },
-      KeyCode::End | KeyCode::Char('G') => {
-        let filtered_count = self.filtered_and_sorted().len();
-        if filtered_count > 0 {
-          self.selected = filtered_count - 1;
-        }
-      },
-      KeyCode::PageUp => {
-        self.selected = self.selected.saturating_sub(10);
-      },
-      KeyCode::PageDown => {
-        let filtered_count = self.filtered_and_sorted().len();
-        if filtered_count > 0 {
-          self.selected = (self.selected + 10).min(filtered_count - 1);
-        }
+  fn handle_help_keys(&mut self, key: crossterm::event::KeyEvent) {
+    match key.code {
+      KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+        self.view_state = ViewState::Normal;
       },
       _ => {},
     }
   }
 
-  fn on_mouse(&mut self, _me: crossterm::event::MouseEvent) {
-    // left as-is
+  fn handle_search_keys(&mut self, key: crossterm::event::KeyEvent) {
+    match key.code {
+      KeyCode::Char(c) => {
+        self.search_query.push(c);
+      },
+      KeyCode::Backspace => {
+        self.search_query.pop();
+      },
+      KeyCode::Enter | KeyCode::Esc => {
+        self.view_state = ViewState::Normal;
+      },
+      _ => {},
+    }
+  }
+
+  fn handle_normal_keys(&mut self, key: crossterm::event::KeyEvent) {
+    match key.code {
+      // Navigation
+      KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
+      KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(),
+      KeyCode::PageUp => self.page_up(),
+      KeyCode::PageDown => self.page_down(),
+      KeyCode::Home => self.go_to_top(),
+      KeyCode::End => self.go_to_bottom(),
+
+      // View snapshot detail
+      KeyCode::Enter => {
+        if !self.filtered_and_sorted_snapshots().is_empty() {
+          self.view_state = ViewState::SnapshotDetail;
+          self.scroll_offset = 0;
+        }
+      },
+
+      // Search
+      KeyCode::Char('/') => {
+        self.view_state = ViewState::Search;
+      },
+      KeyCode::Char('n') => {
+        if !self.search_query.is_empty() {
+          self.move_cursor_down(); // Simple next implementation
+        }
+      },
+      KeyCode::Char('N') => {
+        if !self.search_query.is_empty() {
+          self.move_cursor_up(); // Simple previous implementation
+        }
+      },
+
+      // Sorting
+      KeyCode::Char('s') => self.cycle_sort_column(),
+      KeyCode::Char('r') => self.toggle_sort_order(),
+      KeyCode::Char('c') => self.clear_all_filters(),
+
+      // View options
+      KeyCode::Char('t') => self.show_timestamps = !self.show_timestamps,
+      KeyCode::Char('w') => self.wrap_lines = !self.wrap_lines,
+      KeyCode::Char('#') => self.show_line_numbers = !self.show_line_numbers,
+      KeyCode::Char('f') => self.follow_tail = !self.follow_tail,
+      KeyCode::Char(' ') => self.paused = !self.paused,
+
+      // Bookmarks
+      KeyCode::Char('b') => self.toggle_bookmark(),
+      KeyCode::Char('B') => self.jump_to_next_bookmark(),
+
+      // Help
+      KeyCode::Char('?') => {
+        self.view_state = ViewState::Help;
+      },
+
+      _ => {},
+    }
   }
 }

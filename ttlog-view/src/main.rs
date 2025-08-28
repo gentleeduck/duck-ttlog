@@ -164,8 +164,8 @@ pub fn reader_ui(
     .direction(Direction::Vertical)
     .constraints([
       Constraint::Percentage(33),
-      Constraint::Percentage(33),
-      Constraint::Percentage(34),
+      Constraint::Percentage(23),
+      Constraint::Percentage(44),
     ])
     .split(chunks[1]);
 
