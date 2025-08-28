@@ -103,6 +103,12 @@ impl LogsWidget {
     widget
   }
 
+  pub fn with_events(mut self, events: Vec<ResolvedEvent>) -> Self {
+    // self.logs = events;
+    self.focused = true;
+    self
+  }
+
   // Log event utility functions
   fn ev_timestamp_millis(ev: &ResolvedEvent) -> u64 {
     ev.packed_meta >> 12

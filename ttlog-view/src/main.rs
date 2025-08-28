@@ -43,6 +43,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
   let mut logs = LogsWidget::new();
   let mut logs_graph = LogsGraphWidget::new();
   let mut snapshots = SnapshotWidget::new();
+  let mut snapshots_events = LogsWidget::new().with_events(vec![]);
   let mut events_graph = EventsGraphWidget::new();
   let mut system_info = SystemInfoWidget::new();
 
@@ -65,6 +66,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         &mut snapshots,
         &mut events_graph,
         &mut system_info,
+        &mut snapshots_events,
       )
     })?;
 
@@ -98,6 +100,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
           logs.on_key(k);
           logs_graph.on_key(k);
           snapshots.on_key(k);
+          snapshots_events.on_key(k);
           events_graph.on_key(k);
           system_info.on_key(k);
         },
@@ -106,6 +109,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
           logs.on_mouse(m);
           logs_graph.on_mouse(m);
           snapshots.on_mouse(m);
+          snapshots_events.on_mouse(m);
           events_graph.on_mouse(m);
           system_info.on_mouse(m);
         },
@@ -130,6 +134,7 @@ pub fn reader_ui(
   snapshots: &mut SnapshotWidget,
   events_graph: &mut EventsGraphWidget,
   system_info: &mut SystemInfoWidget,
+  snapshots_events: &mut LogsWidget,
 ) {
   let area = f.area();
 
@@ -179,5 +184,5 @@ pub fn reader_ui(
   // Render Right Side Widgets
   events_graph.render(f, right_side_l_1[0]);
   system_info.render(f, right_side_l_1[1]);
-  snapshots.render(f, right_side_l_1[2]);
+  snapshots.render(f, right_side_l_1[2], snapshots_events);
 }

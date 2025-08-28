@@ -1,4 +1,3 @@
-use chrono::{DateTime, TimeZone, Utc};
 use crossterm::event::{KeyCode, MouseEvent};
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -10,13 +9,8 @@ use ratatui::{
   },
   Frame,
 };
-use smallvec::SmallVec;
-use ttlog::{
-  event::LogLevel,
-  snapshot::{ResolvedEvent, SnapShot},
-};
 
-use crate::{snapshot_read::SnapshotFile, widget::Widget};
+use crate::{logs_widget::LogsWidget, snapshot_read::SnapshotFile, widget::Widget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortBy {
@@ -539,34 +533,37 @@ impl SnapshotWidget {
   fn render_snapshot_detail_popup(&self, f: &mut Frame<'_>, area: Rect) {
     let snapshots = self.filtered_and_sorted_snapshots();
 
-    let popup_area = Self::centered_rect(80, 70, area);
+    let popup_area = Self::centered_rect(95, 90, area);
     f.render_widget(Clear, popup_area);
 
     if let Some((_, snapshot)) = snapshots.get(self.selected_row) {
-      let json_content = serde_json::to_string_pretty(&snapshot.data)
-        .unwrap_or_else(|_| "Failed to serialize snapshot data".to_string());
-      let total_lines = json_content.lines().count() as u16;
+      let mut logs = LogsWidget::new().with_events(vec![]);
+      logs.render(f, popup_area);
 
-      let block = Block::default()
-        .title(format!(" Snapshot Data: {} ", snapshot.name))
-        .title_alignment(Alignment::Center)
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(Color::Green));
-
-      let paragraph = Paragraph::new(Text::from(json_content))
-        .block(block)
-        .scroll((self.scroll_offset, 0))
-        .alignment(Alignment::Left);
-
-      f.render_widget(paragraph, popup_area);
-
-      // Render scrollbar
-      let mut scrollbar_state =
-        ScrollbarState::new(total_lines as usize).position(self.scroll_offset as usize);
-      let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .thumb_style(Style::default().fg(Color::Green));
-      f.render_stateful_widget(scrollbar, popup_area, &mut scrollbar_state);
+      // let json_content = serde_json::to_string_pretty(&snapshot.data)
+      //   .unwrap_or_else(|_| "Failed to serialize snapshot data".to_string());
+      // let total_lines = json_content.lines().count() as u16;
+      //
+      // let block = Block::default()
+      //   .title(format!(" Snapshot Data: {} ", snapshot.name))
+      //   .title_alignment(Alignment::Center)
+      //   .borders(Borders::ALL)
+      //   .border_type(BorderType::Rounded)
+      //   .border_style(Style::default().fg(Color::Green));
+      //
+      // let paragraph = Paragraph::new(Text::from(json_content))
+      //   .block(block)
+      //   .scroll((self.scroll_offset, 0))
+      //   .alignment(Alignment::Left);
+      //
+      // f.render_widget(paragraph, popup_area);
+      //
+      // // Render scrollbar
+      // let mut scrollbar_state =
+      //   ScrollbarState::new(total_lines as usize).position(self.scroll_offset as usize);
+      // let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+      //   .thumb_style(Style::default().fg(Color::Green));
+      // f.render_stateful_widget(scrollbar, popup_area, &mut scrollbar_state);
     } else {
       let block = Block::default()
         .title(" No Snapshot Selected ")
@@ -606,7 +603,7 @@ impl SnapshotWidget {
     let popup_area = Layout::default()
       .direction(Direction::Vertical)
       .constraints([
-        Constraint::Length((area.height.saturating_sub(help_height - 1)) / 2),
+        Constraint::Length((area.height.saturating_sub(help_height)) / 2),
         Constraint::Length(help_height),
         Constraint::Min(0),
       ])
@@ -634,7 +631,7 @@ impl SnapshotWidget {
 }
 
 impl Widget for SnapshotWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect, &mut events_widget: &mut LogsWidget) {
     self.area = Some(area);
     // Temporarily move out the table state to avoid borrowing conflicts
     let mut table_state = std::mem::take(&mut self.table_state);
