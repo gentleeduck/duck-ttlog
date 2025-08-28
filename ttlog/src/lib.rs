@@ -1,5 +1,6 @@
 pub mod event;
 pub mod file_listener;
+pub mod kv;
 pub mod lf_buffer;
 pub mod listener;
 pub mod panic_hook;

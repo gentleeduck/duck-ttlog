@@ -22,6 +22,8 @@ crossbeam-channel.workspace = true
 crossbeam-queue = { workspace = true }
 ttlog-macros = { path = "../ttlog-macros" }
 signal-hook = "0.3.18"
+ryu = "1.0.20"
+itoa = "1.0.15"
 
 [dev-dependencies]
 # System utilities

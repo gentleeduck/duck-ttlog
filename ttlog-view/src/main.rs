@@ -84,7 +84,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
               system_info.focused = app_state.focused_widget == system_info.id;
             },
             KeyCode::BackTab => {
-              app_state.focused_widget = (app_state.focused_widget + 2) % 6;
+              app_state.focused_widget = (app_state.focused_widget + 6 - 1) % 6;
               list.focused = app_state.focused_widget == list.id;
               logs.focused = app_state.focused_widget == logs.id;
               logs_graph.focused = app_state.focused_widget == logs_graph.id;
