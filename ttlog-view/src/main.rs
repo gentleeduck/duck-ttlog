@@ -184,5 +184,5 @@ pub fn reader_ui(
   // Render Right Side Widgets
   events_graph.render(f, right_side_l_1[0]);
   system_info.render(f, right_side_l_1[1]);
-  snapshots.render(f, right_side_l_1[2], snapshots_events);
+  snapshots.render(f, right_side_l_1[2]);
 }

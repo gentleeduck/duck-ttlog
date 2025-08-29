@@ -11,6 +11,8 @@ use ratatui::{
 };
 
 use crate::{logs_widget::LogsWidget, snapshot_read::SnapshotFile, widget::Widget};
+use chrono::{DateTime, TimeZone, Utc};
+use ttlog::{event::LogLevel, snapshot::ResolvedEvent};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortBy {
@@ -31,6 +33,7 @@ pub enum ViewState {
   Search,
   Help,
   SnapshotDetail,
+  EventDetail, // New state for viewing individual event details
 }
 
 pub struct SnapshotWidget {
@@ -47,6 +50,10 @@ pub struct SnapshotWidget {
   // Selection and navigation
   pub selected_row: usize,
   pub scroll_offset: u16,
+
+  // Events table state
+  pub events_selected_row: usize,
+  pub events_scroll_offset: u16,
 
   // Search and filtering
   pub search_query: String,
@@ -66,6 +73,8 @@ pub struct SnapshotWidget {
   // UI state
   pub area: Option<Rect>,
   pub table_state: TableState,
+  pub events_table_state: TableState, // New table state for events
+  pub events_widget: Option<LogsWidget>,
 }
 
 impl SnapshotWidget {
@@ -79,6 +88,8 @@ impl SnapshotWidget {
       paused: false,
       selected_row: 0,
       scroll_offset: 0,
+      events_selected_row: 0,
+      events_scroll_offset: 0,
       search_query: String::new(),
       sort_by: SortBy::CreateTime,
       sort_order: SortOrder::Descending,
@@ -90,15 +101,151 @@ impl SnapshotWidget {
       bookmarks: Vec::new(),
       area: None,
       table_state: TableState::default(),
+      events_table_state: TableState::default(),
+      events_widget: None,
     };
 
     widget.table_state.select(Some(0));
+    widget.events_table_state.select(Some(0));
     widget
   }
 
   fn format_timestamp(timestamp_str: &str) -> String {
     // Assume the timestamp is already formatted, or parse and reformat if needed
     timestamp_str.to_string()
+  }
+
+  // Get events from current snapshot
+  fn get_current_snapshot_events(&self) -> Option<&[ResolvedEvent]> {
+    let snapshots = self.filtered_and_sorted_snapshots();
+    snapshots
+      .get(self.selected_row)
+      .map(|(_, s)| s.data.events.as_slice())
+  }
+
+  // Get selected event details
+  fn get_selected_event(&self) -> Option<&ResolvedEvent> {
+    self
+      .get_current_snapshot_events()
+      .and_then(|events| events.get(self.events_selected_row))
+  }
+
+  // Event helpers
+  fn ev_timestamp_millis(ev: &ResolvedEvent) -> u64 {
+    ev.packed_meta >> 12
+  }
+
+  fn ev_level(ev: &ResolvedEvent) -> LogLevel {
+    unsafe { std::mem::transmute(((ev.packed_meta >> 8) & 0xF) as u8) }
+  }
+
+  fn level_name(level: LogLevel) -> &'static str {
+    match level {
+      LogLevel::FATAL => "FATAL",
+      LogLevel::ERROR => "ERROR",
+      LogLevel::WARN => "WARN",
+      LogLevel::INFO => "INFO",
+      LogLevel::DEBUG => "DEBUG",
+      LogLevel::TRACE => "TRACE",
+    }
+  }
+
+  fn format_event_timestamp(ms: u64) -> String {
+    let secs = (ms / 1000) as i64;
+    let sub_ms = (ms % 1000) as u32;
+    let dt: DateTime<Utc> = Utc
+      .timestamp_opt(secs, sub_ms * 1_000_000)
+      .single()
+      .unwrap_or_else(|| Utc.timestamp_opt(0, 0).earliest().unwrap());
+    dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+  }
+
+  // Events navigation
+  fn move_events_cursor_up(&mut self) {
+    if self.events_selected_row > 0 {
+      self.events_selected_row -= 1;
+      self
+        .events_table_state
+        .select(Some(self.events_selected_row));
+    }
+  }
+
+  fn move_events_cursor_down(&mut self) {
+    let events_count = self.get_current_snapshot_events().map_or(0, |e| e.len());
+    if events_count > 0 && self.events_selected_row + 1 < events_count {
+      self.events_selected_row += 1;
+      self
+        .events_table_state
+        .select(Some(self.events_selected_row));
+    }
+  }
+
+  fn events_page_up(&mut self) {
+    self.events_selected_row = self.events_selected_row.saturating_sub(10);
+    self
+      .events_table_state
+      .select(Some(self.events_selected_row));
+  }
+
+  fn events_page_down(&mut self) {
+    let events_count = self.get_current_snapshot_events().map_or(0, |e| e.len());
+    if events_count > 0 {
+      self.events_selected_row = (self.events_selected_row + 10).min(events_count - 1);
+      self
+        .events_table_state
+        .select(Some(self.events_selected_row));
+    }
+  }
+
+  fn events_go_to_top(&mut self) {
+    self.events_selected_row = 0;
+    self.events_table_state.select(Some(0));
+  }
+
+  fn events_go_to_bottom(&mut self) {
+    let events_count = self.get_current_snapshot_events().map_or(0, |e| e.len());
+    if events_count > 0 {
+      self.events_selected_row = events_count - 1;
+      self
+        .events_table_state
+        .select(Some(self.events_selected_row));
+    }
+  }
+
+  // Event detail scrolling
+  fn scroll_event_detail_up(&mut self) {
+    self.events_scroll_offset = self.events_scroll_offset.saturating_sub(1);
+  }
+
+  fn scroll_event_detail_down(&mut self) {
+    self.events_scroll_offset = self.events_scroll_offset.saturating_add(1);
+  }
+
+  fn scroll_event_detail_page_up(&mut self) {
+    self.events_scroll_offset = self.events_scroll_offset.saturating_sub(10);
+  }
+
+  fn scroll_event_detail_page_down(&mut self) {
+    self.events_scroll_offset = self.events_scroll_offset.saturating_add(10);
+  }
+
+  fn scroll_event_detail_to_top(&mut self) {
+    self.events_scroll_offset = 0;
+  }
+
+  fn scroll_event_detail_to_bottom(&mut self) {
+    if let Some(content_height) = self.get_event_detail_content_height() {
+      self.events_scroll_offset = content_height.saturating_sub(1);
+    }
+  }
+
+  fn get_event_detail_content_height(&self) -> Option<u16> {
+    if let Some(event) = self.get_selected_event() {
+      let json_content = serde_json::to_string_pretty(event).ok()?;
+      Some(json_content.lines().count() as u16)
+    } else {
+      None
+    }
   }
 
   // Data processing
@@ -530,40 +677,46 @@ impl SnapshotWidget {
     f.render_widget(dim_block, area);
   }
 
-  fn render_snapshot_detail_popup(&self, f: &mut Frame<'_>, area: Rect) {
-    let snapshots = self.filtered_and_sorted_snapshots();
-
+  fn render_snapshot_detail_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
     let popup_area = Self::centered_rect(95, 90, area);
     f.render_widget(Clear, popup_area);
 
-    if let Some((_, snapshot)) = snapshots.get(self.selected_row) {
-      let mut logs = LogsWidget::new().with_events(vec![]);
-      logs.render(f, popup_area);
+    // Avoid holding borrows across calls
+    let snapshot_info = {
+      let snapshots = self.filtered_and_sorted_snapshots();
+      snapshots
+        .get(self.selected_row)
+        .map(|(_, s)| (s.name.clone(), s.data.clone()))
+    };
 
-      // let json_content = serde_json::to_string_pretty(&snapshot.data)
-      //   .unwrap_or_else(|_| "Failed to serialize snapshot data".to_string());
-      // let total_lines = json_content.lines().count() as u16;
-      //
-      // let block = Block::default()
-      //   .title(format!(" Snapshot Data: {} ", snapshot.name))
-      //   .title_alignment(Alignment::Center)
-      //   .borders(Borders::ALL)
-      //   .border_type(BorderType::Rounded)
-      //   .border_style(Style::default().fg(Color::Green));
-      //
-      // let paragraph = Paragraph::new(Text::from(json_content))
-      //   .block(block)
-      //   .scroll((self.scroll_offset, 0))
-      //   .alignment(Alignment::Left);
-      //
-      // f.render_widget(paragraph, popup_area);
-      //
-      // // Render scrollbar
-      // let mut scrollbar_state =
-      //   ScrollbarState::new(total_lines as usize).position(self.scroll_offset as usize);
-      // let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-      //   .thumb_style(Style::default().fg(Color::Green));
-      // f.render_stateful_widget(scrollbar, popup_area, &mut scrollbar_state);
+    if let Some((snapshot_name, snapshot_data)) = snapshot_info {
+      if snapshot_data.events.is_empty() {
+        let json_content = serde_json::to_string_pretty(&snapshot_data)
+          .unwrap_or_else(|_| "Failed to serialize snapshot data".to_string());
+        let total_lines = json_content.lines().count() as u16;
+
+        let block = Block::default()
+          .title(format!(" Snapshot Data: {} ", snapshot_name))
+          .title_alignment(Alignment::Center)
+          .borders(Borders::ALL)
+          .border_type(BorderType::Rounded)
+          .border_style(Style::default().fg(Color::Green));
+
+        let paragraph = Paragraph::new(Text::from(json_content))
+          .block(block)
+          .scroll((self.scroll_offset, 0))
+          .alignment(Alignment::Left);
+
+        f.render_widget(paragraph, popup_area);
+
+        let mut scrollbar_state =
+          ScrollbarState::new(total_lines as usize).position(self.scroll_offset as usize);
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+          .thumb_style(Style::default().fg(Color::Green));
+        f.render_stateful_widget(scrollbar, popup_area, &mut scrollbar_state);
+      } else {
+        self.render_events_table(f, popup_area, &snapshot_name);
+      }
     } else {
       let block = Block::default()
         .title(" No Snapshot Selected ")
@@ -573,6 +726,128 @@ impl SnapshotWidget {
         .alignment(Alignment::Center)
         .block(block);
       f.render_widget(paragraph, popup_area);
+    }
+  }
+
+  fn render_events_table(&mut self, f: &mut Frame<'_>, area: Rect, snapshot_name: &str) {
+    let events = self.get_current_snapshot_events().unwrap_or(&[]);
+
+    let block = Block::default()
+      .title(format!(
+        " Events in Snapshot: {} [Enter to view details] ",
+        snapshot_name
+      ))
+      .title_alignment(Alignment::Center)
+      .borders(Borders::ALL)
+      .border_type(BorderType::Rounded)
+      .border_style(Style::default().fg(Color::Green));
+
+    // Build events table
+    let header = Row::new(vec![
+      Cell::from("#"),
+      Cell::from("Event Type"),
+      Cell::from("Timestamp"),
+      Cell::from("Summary"),
+    ])
+    .style(
+      Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD),
+    );
+
+    let rows: Vec<Row> = events
+      .iter()
+      .enumerate()
+      .map(|(i, event)| {
+        let event_type = Self::level_name(Self::ev_level(event)).to_string();
+        let timestamp = Self::format_event_timestamp(Self::ev_timestamp_millis(event));
+        let mut summary = event.message.clone();
+        if summary.len() > 50 {
+          summary.truncate(47);
+          summary.push_str("...");
+        }
+
+        Row::new(vec![
+          Cell::from(format!("{}", i + 1)),
+          Cell::from(event_type),
+          Cell::from(timestamp),
+          Cell::from(summary),
+        ])
+      })
+      .collect();
+
+    let constraints = [
+      Constraint::Length(4),  // #
+      Constraint::Length(15), // Event Type
+      Constraint::Length(20), // Timestamp
+      Constraint::Min(20),    // Summary
+    ];
+
+    let mut events_table_state = std::mem::take(&mut self.events_table_state);
+    events_table_state.select(Some(self.events_selected_row));
+
+    let table = Table::new(rows, &constraints)
+      .header(header)
+      .block(block)
+      .highlight_style(Style::default().fg(Color::Black).bg(Color::Yellow));
+
+    f.render_stateful_widget(table, area, &mut events_table_state);
+    self.events_table_state = events_table_state;
+
+    // Show navigation hint
+    let hint_area = Rect {
+      x: area.x + 2,
+      y: area.y + area.height - 2,
+      width: area.width - 4,
+      height: 1,
+    };
+
+    let hint = Paragraph::new("↑↓/jk: Navigate | Enter: View details | ESC: Back")
+      .style(Style::default().fg(Color::Gray));
+    f.render_widget(hint, hint_area);
+  }
+
+  fn render_event_detail_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
+    let popup_area = Self::centered_rect(90, 80, area);
+    f.render_widget(Clear, popup_area);
+
+    if let Some(event) = self.get_selected_event() {
+      let json_content = serde_json::to_string_pretty(event)
+        .unwrap_or_else(|_| "Failed to serialize event data".to_string());
+      let total_lines = json_content.lines().count() as u16;
+
+      let block = Block::default()
+        .title(format!(" Event Detail #{} ", self.events_selected_row + 1))
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(Color::Magenta));
+
+      let paragraph = Paragraph::new(Text::from(json_content))
+        .block(block)
+        .scroll((self.events_scroll_offset, 0))
+        .alignment(Alignment::Left);
+
+      f.render_widget(paragraph, popup_area);
+
+      // Render scrollbar
+      let mut scrollbar_state =
+        ScrollbarState::new(total_lines as usize).position(self.events_scroll_offset as usize);
+      let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .thumb_style(Style::default().fg(Color::Magenta));
+      f.render_stateful_widget(scrollbar, popup_area, &mut scrollbar_state);
+
+      // Show navigation hint
+      let hint_area = Rect {
+        x: popup_area.x + 2,
+        y: popup_area.y + popup_area.height - 2,
+        width: popup_area.width - 4,
+        height: 1,
+      };
+
+      let hint = Paragraph::new("↑↓/jk: Scroll | ESC: Back to events")
+        .style(Style::default().fg(Color::Gray));
+      f.render_widget(hint, hint_area);
     }
   }
 
@@ -590,9 +865,16 @@ impl SnapshotWidget {
       "│    n/N     Next/Prev result   │      s     Cycle sort column              │",
       "│    c       Clear all filters  │      r     Reverse sort order             │",
       "│                               │                                           │",
-      "│   Bookmarks:                  │     Other:                                │",
-      "│    b       Toggle bookmark    │      ?     Toggle this help               │",
-      "│    B       Jump to next       │      ESC   Close popups                   │",
+      "│   Events Navigation:          │     Other:                                │",
+      "│    In Events Table:           │      ?     Toggle this help               │",
+      "│    ↑↓/jk   Navigate events    │      ESC   Close popups                   │",
+      "│    Enter   View event detail  │                                           │",
+      "│    In Event Detail:           │                                           │",
+      "│    ↑↓/jk   Scroll content     │                                           │",
+      "│                               │                                           │",
+      "│   Bookmarks:                  │                                           │",
+      "│    b       Toggle bookmark    │                                           │",
+      "│    B       Jump to next       │                                           │",
       "│                               │                                           │",
       "└───────────────────────────────────────────────────────────────────────────┘",
     ];
@@ -631,7 +913,7 @@ impl SnapshotWidget {
 }
 
 impl Widget for SnapshotWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect, &mut events_widget: &mut LogsWidget) {
+  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
     self.area = Some(area);
     // Temporarily move out the table state to avoid borrowing conflicts
     let mut table_state = std::mem::take(&mut self.table_state);
@@ -695,6 +977,11 @@ impl Widget for SnapshotWidget {
         self.render_dim_overlay(f, area);
         self.render_snapshot_detail_popup(f, area);
       },
+      ViewState::EventDetail => {
+        self.render_dim_overlay(f, area);
+        self.render_snapshot_detail_popup(f, area);
+        self.render_event_detail_popup(f, area);
+      },
       ViewState::Help => {
         self.render_dim_overlay(f, area);
         self.render_help_popup(f, area);
@@ -709,6 +996,7 @@ impl Widget for SnapshotWidget {
     }
 
     match self.view_state {
+      ViewState::EventDetail => self.handle_event_detail_keys(key),
       ViewState::SnapshotDetail => self.handle_snapshot_detail_keys(key),
       ViewState::Help => self.handle_help_keys(key),
       ViewState::Search => self.handle_search_keys(key),
@@ -724,19 +1012,64 @@ impl Widget for SnapshotWidget {
 
 // Key handling implementation
 impl SnapshotWidget {
-  fn handle_snapshot_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
+  fn handle_event_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
     match key.code {
       KeyCode::Esc => {
-        self.view_state = ViewState::Normal;
-        self.scroll_offset = 0;
+        self.view_state = ViewState::SnapshotDetail;
+        self.events_scroll_offset = 0;
       },
-      KeyCode::Up | KeyCode::Char('k') => self.scroll_popup_up(),
-      KeyCode::Down | KeyCode::Char('j') => self.scroll_popup_down(),
-      KeyCode::PageUp => self.scroll_popup_page_up(),
-      KeyCode::PageDown => self.scroll_popup_page_down(),
-      KeyCode::Home => self.scroll_popup_to_top(),
-      KeyCode::End => self.scroll_popup_to_bottom(),
+      KeyCode::Up | KeyCode::Char('k') => self.scroll_event_detail_up(),
+      KeyCode::Down | KeyCode::Char('j') => self.scroll_event_detail_down(),
+      KeyCode::PageUp => self.scroll_event_detail_page_up(),
+      KeyCode::PageDown => self.scroll_event_detail_page_down(),
+      KeyCode::Home => self.scroll_event_detail_to_top(),
+      KeyCode::End => self.scroll_event_detail_to_bottom(),
       _ => {},
+    }
+  }
+
+  fn handle_snapshot_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
+    let events = self.get_current_snapshot_events();
+
+    let has_events = events.map_or(false, |e| !e.is_empty());
+    if has_events {
+      // Handle events table navigation
+      match key.code {
+        KeyCode::Esc => {
+          self.view_state = ViewState::Normal;
+          self.scroll_offset = 0;
+          self.events_selected_row = 0;
+          self.events_table_state.select(Some(0));
+        },
+        KeyCode::Up | KeyCode::Char('k') => self.move_events_cursor_up(),
+        KeyCode::Down | KeyCode::Char('j') => self.move_events_cursor_down(),
+        KeyCode::PageUp => self.events_page_up(),
+        KeyCode::PageDown => self.events_page_down(),
+        KeyCode::Home => self.events_go_to_top(),
+        KeyCode::End => self.events_go_to_bottom(),
+        KeyCode::Enter => {
+          if has_events {
+            self.view_state = ViewState::EventDetail;
+            self.events_scroll_offset = 0;
+          }
+        },
+        _ => {},
+      }
+    } else {
+      // Handle original snapshot detail scrolling
+      match key.code {
+        KeyCode::Esc => {
+          self.view_state = ViewState::Normal;
+          self.scroll_offset = 0;
+        },
+        KeyCode::Up | KeyCode::Char('k') => self.scroll_popup_up(),
+        KeyCode::Down | KeyCode::Char('j') => self.scroll_popup_down(),
+        KeyCode::PageUp => self.scroll_popup_page_up(),
+        KeyCode::PageDown => self.scroll_popup_page_down(),
+        KeyCode::Home => self.scroll_popup_to_top(),
+        KeyCode::End => self.scroll_popup_to_bottom(),
+        _ => {},
+      }
     }
   }
 
@@ -765,6 +1098,10 @@ impl SnapshotWidget {
   }
 
   fn handle_normal_keys(&mut self, key: crossterm::event::KeyEvent) {
+    if let Some(widget) = self.events_widget.as_mut() {
+      widget.on_key(key);
+    }
+
     match key.code {
       // Navigation
       KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
@@ -779,6 +1116,8 @@ impl SnapshotWidget {
         if !self.filtered_and_sorted_snapshots().is_empty() {
           self.view_state = ViewState::SnapshotDetail;
           self.scroll_offset = 0;
+          self.events_selected_row = 0;
+          self.events_table_state.select(Some(0));
         }
       },
 

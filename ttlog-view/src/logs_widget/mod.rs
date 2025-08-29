@@ -104,7 +104,7 @@ impl LogsWidget {
   }
 
   pub fn with_events(mut self, events: Vec<ResolvedEvent>) -> Self {
-    // self.logs = events;
+    self.logs = events;
     self.focused = true;
     self
   }
