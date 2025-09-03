@@ -42,6 +42,7 @@ impl LogListener for FileListener {
   fn handle(&self, event: &LogEvent, interner: &StringInterner) {
     if let Ok(mut buf) = self.buffer.lock() {
       buf.clear();
+      println!("{}", buf);
 
       // Resolve strings
       let target_opt = interner.get_target(event.target_id);
@@ -78,11 +79,4 @@ impl LogListener for FileListener {
       }
     }
   }
-}
-
-/// Initialize ttlog with file output
-pub fn init_file(path: &str) -> Result<(), Box<dyn std::error::Error>> {
-  let trace = Trace::init(4096, 64, "default", Some("./logs/"));
-  trace.add_listener(Arc::new(FileListener::new(path)?));
-  Ok(())
 }

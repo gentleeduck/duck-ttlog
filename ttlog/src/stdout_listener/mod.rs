@@ -50,6 +50,17 @@ impl LogListener for StdoutListener {
         },
       };
 
+      let kv: String = match event.kv_id {
+        Some(kv_id) => match interner.get_kv(kv_id.get()) {
+          Some(kv_data) => match std::str::from_utf8(kv_data.as_slice()) {
+            Ok(s) => s.to_string(),
+            Err(_) => "<binary_kv_data>".to_string(),
+          },
+          None => "<structured_data>".to_string(),
+        },
+        None => "".to_string(),
+      };
+
       // Resolve File + Position
       let file: String = interner
         .get_file(event.file_id)
@@ -64,7 +75,6 @@ impl LogListener for StdoutListener {
       let thread_id = event.thread_id(); // from packed_meta
 
       // Convert timestamp
-
       let datetime: DateTime<Utc> =
         DateTime::from_timestamp((ts_ms / 1000) as i64, ((ts_ms % 1000) * 1_000_000) as u32)
           .unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap());
@@ -74,7 +84,7 @@ impl LogListener for StdoutListener {
       use std::fmt::Write;
       let _ = write!(
         buf,
-        "[{time}][{level:^5}][thread:{tid}] {target} @ {file}:{line}:{col} | {msg}\n",
+        "[{time}][{level:^5}][thread:{tid}] {target} @ {file}:{line}:{col} | {msg}{kv}\n",
         time = formatted_ts,
         level = level.as_str(),
         tid = thread_id,
@@ -83,24 +93,11 @@ impl LogListener for StdoutListener {
         line = line,
         col = col,
         msg = message,
+        kv = kv
       );
 
       // Single stdout write
       let _ = io::stdout().write_all(buf.as_bytes());
     }
   }
-}
-
-/// Initialize ttlog with stdout output - fastest setup
-pub fn init_stdout() -> Result<(), Box<dyn std::error::Error>> {
-  let trace = Trace::init(4096, 64, "default", Some("./logs/"));
-  trace.add_listener(Arc::new(StdoutListener::new()));
-  Ok(())
-}
-
-/// Initialize with custom capacity
-pub fn init_stdout_with_capacity(capacity: usize) -> Result<(), Box<dyn std::error::Error>> {
-  let trace = Trace::init(capacity, 64, "default", Some("./logs/"));
-  trace.add_listener(Arc::new(StdoutListener::new()));
-  Ok(())
 }

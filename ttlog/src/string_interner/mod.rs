@@ -114,19 +114,33 @@ pub struct StringInterner {
 
 impl StringInterner {
   pub fn new() -> Self {
+    let mut targets = Vec::with_capacity(256);
+    let mut messages = Vec::with_capacity(4096);
+    let mut files = Vec::with_capacity(512);
+    let mut kvs = Vec::with_capacity(512);
+
+    // Fill slot 0 with dummy values
+    targets.push(Arc::from(""));
+    messages.push(Arc::from(""));
+    files.push(Arc::from(""));
+    kvs.push(Arc::from(smallvec::SmallVec::new()));
+
     Self {
-      targets: RwLock::new(Vec::with_capacity(256)),
-      messages: RwLock::new(Vec::with_capacity(4096)),
-      kvs: RwLock::new(Vec::with_capacity(512)),
-      files: RwLock::new(Vec::with_capacity(512)),
+      targets: RwLock::new(targets),
+      messages: RwLock::new(messages),
+      files: RwLock::new(files),
+      kvs: RwLock::new(kvs),
+
       target_lookup: RwLock::new(HashMap::with_capacity(256)),
       message_lookup: RwLock::new(HashMap::with_capacity(4096)),
       file_lookup: RwLock::new(HashMap::with_capacity(512)),
       kv_lookup: RwLock::new(HashMap::with_capacity(512)),
-      target_count: AtomicU16::new(0),
-      message_count: AtomicU16::new(0),
-      kv_count: AtomicU16::new(0),
-      file_count: AtomicU16::new(0),
+
+      // start counters at 1, so the next real string gets id = 1
+      target_count: AtomicU16::new(1),
+      message_count: AtomicU16::new(1),
+      file_count: AtomicU16::new(1),
+      kv_count: AtomicU16::new(1),
     }
   }
 
