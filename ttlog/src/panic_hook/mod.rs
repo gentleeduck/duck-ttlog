@@ -1,5 +1,3 @@
-mod __test__;
-
 use crate::trace::Message;
 
 use chrono::Duration;
@@ -13,15 +11,24 @@ impl PanicHook {
     std::panic::set_hook(Box::new(move |info| {
       eprintln!("[Panic] Captured panic: {:?}", info);
 
-      // non-blocking attempt to enqueue; do NOT block in panic handler
-      if let Err(e) = sender.try_send(Message::SnapshotImmediate("panic".to_string())) {
+      // Create response channel
+      let (tx, rx) = std::sync::mpsc::channel();
+
+      // Try to enqueue snapshot request
+      if let Err(e) = sender.try_send(Message::SnapshotImmediate("panic".to_string(), tx)) {
         eprintln!("[Panic] Unable to enqueue snapshot request: {:?}", e);
-      } else {
-        eprintln!("[Panic] Snapshot request enqueued");
+        return;
       }
 
-      // Give the writer thread time to process the snapshot
-      thread::sleep(Duration::milliseconds(120).to_std().unwrap());
+      eprintln!("[Panic] Waiting for snapshot completion...");
+
+      match rx.recv() {
+        Ok(_) => eprintln!("[Panic] Snapshot completed!"),
+        Err(err) => eprintln!("[Panic] Failed to receive snapshot confirmation: {:?}", err),
+      }
+
+      // Optional: small grace period to flush I/O
+      thread::sleep(Duration::milliseconds(50).to_std().unwrap());
 
       eprintln!("[Panic] Panic hook completed");
     }));

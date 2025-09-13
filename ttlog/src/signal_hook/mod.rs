@@ -45,18 +45,28 @@ impl SignalHook {
   }
 
   fn signal_request_snapshot(sender: &Sender<Message>, info: &str) {
-    eprintln!("[{}] Captured panic: {:?}", info, info);
+    eprintln!("[{}] Captured signal: {:?}", info, info);
 
-    // non-blocking attempt to enqueue; do NOT block in panic handler
-    if let Err(e) = sender.try_send(Message::SnapshotImmediate("panic".to_string())) {
-      eprintln!("[{}] Unable to enqueue snapshot request: {:?}", e, info);
-    } else {
-      eprintln!("[{}] Snapshot request enqueued", info);
+    // Create a response channel
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    // Try to send snapshot request
+    if let Err(e) = sender.try_send(Message::SnapshotImmediate(info.to_string(), tx)) {
+      eprintln!("[{}] Failed to enqueue snapshot request: {:?}", info, e);
+      return;
     }
 
-    // Give the writer thread time to process the snapshot
-    thread::sleep(Duration::milliseconds(120).to_std().unwrap());
+    eprintln!("[{}] Waiting for snapshot completion...", info);
 
-    eprintln!("[{}] Panic hook completed", info);
+    // Wait for confirmation (blocks until snapshot thread responds)
+    match rx.recv() {
+      Ok(_) => eprintln!("[{}] Snapshot completed!", info),
+      Err(err) => eprintln!(
+        "[{}] Failed to receive snapshot confirmation: {:?}",
+        info, err
+      ),
+    }
+
+    eprintln!("[{}] Signal handling finished", info);
   }
 }

@@ -17,7 +17,7 @@ use std::sync::atomic::{self, AtomicU8, Ordering};
 
 #[derive(Debug)]
 pub enum Message {
-  SnapshotImmediate(String),
+  SnapshotImmediate(String, std::sync::mpsc::Sender<()>),
   FlushAndExit,
 }
 
@@ -35,7 +35,7 @@ pub struct EventBroadcast {
 impl std::fmt::Display for Message {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match self {
-      Message::SnapshotImmediate(reason) => write!(f, "SnapshotImmediate: {}", reason),
+      Message::SnapshotImmediate(reason, _) => write!(f, "SnapshotImmediate: {}", reason),
       Message::FlushAndExit => write!(f, "FlushAndExit"),
     }
   }
@@ -52,6 +52,8 @@ pub struct Trace {
   pub level: atomic::AtomicU8,
   pub interner: Arc<StringInterner>,
   pub listener_sender: Sender<ListenerMessage>,
+  pub write_thread: Option<thread::JoinHandle<()>>,
+  pub listener_thread: Option<thread::JoinHandle<()>>,
 }
 
 thread_local! {
@@ -73,7 +75,18 @@ impl Trace {
       interner,
       listener_sender,
       level: AtomicU8::new(LogLevel::WARN as u8),
+      write_thread: None,
+      listener_thread: None,
     }
+  }
+
+  fn set_handler(
+    &mut self,
+    write_thread: Option<thread::JoinHandle<()>>,
+    listener_thread: Option<thread::JoinHandle<()>>,
+  ) {
+    self.write_thread = write_thread;
+    self.listener_thread = listener_thread;
   }
 
   pub fn init(
@@ -105,7 +118,7 @@ impl Trace {
     };
 
     // Create the trace instance first
-    let trace = Trace::new(
+    let mut trace = Trace::new(
       sender,
       listener_sender,
       event_broadcast_sender,
@@ -121,7 +134,7 @@ impl Trace {
       Err(_) => panic!("GLOBAL_LOGGER already initialized"),
     });
 
-    thread::spawn(move || {
+    let write_thread_handle = thread::spawn(move || {
       Self::writer_loop(
         receiver,
         capacity,
@@ -134,7 +147,7 @@ impl Trace {
 
     // Spawn separate listener management thread
     let interner_listener = Arc::clone(&trace.interner);
-    thread::spawn(move || {
+    let listener_thread_handle = thread::spawn(move || {
       Self::listener_loop(
         listener_receiver,
         event_broadcast_receiver,
@@ -142,7 +155,12 @@ impl Trace {
       );
     });
 
-    thread::sleep(std::time::Duration::from_millis(10));
+    trace.set_handler(Some(write_thread_handle), Some(listener_thread_handle));
+
+    // Wait for writer and listener threads to start
+    // write_thread_handle.join().unwrap();
+    // listener_thread_handle.join().unwrap();
+
     trace
   }
 
@@ -160,13 +178,19 @@ impl Trace {
     }
   }
 
-  pub fn shutdown(&self) {
+  pub fn shutdown(&mut self) {
     // Shutdown listeners first
     let _ = self.listener_sender.try_send(ListenerMessage::Shutdown);
     // Then shutdown writer
     let _ = self.sender.try_send(Message::FlushAndExit);
-    // Give threads time to process shutdown
-    thread::sleep(Duration::milliseconds(200).to_std().unwrap());
+
+    // join threads instead of sleeping
+    if let Some(handle) = self.write_thread.take() {
+      let _ = handle.join();
+    }
+    if let Some(handle) = self.listener_thread.take() {
+      let _ = handle.join();
+    }
   }
 
   pub fn get_sender(&self) -> Sender<Message> {
@@ -174,20 +198,20 @@ impl Trace {
   }
 
   pub fn request_snapshot(&self, reason: impl Into<String>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+
     if let Err(e) = self
       .sender
-      .try_send(Message::SnapshotImmediate(reason.into()))
+      .try_send(Message::SnapshotImmediate(reason.into(), tx))
     {
-      eprintln!(
-        "[Snapshot Request] Unable to enqueue snapshot request: {:?}",
-        e
-      );
-    } else {
-      eprintln!("[Snapshot Request] Snapshot request enqueued");
+      eprintln!("[Snapshot Request] Failed to enqueue: {:?}", e);
+      return;
     }
 
-    thread::sleep(Duration::milliseconds(120).to_std().unwrap());
-    eprintln!("[Snapshot Request] Snapshot request completed");
+    eprintln!("[Snapshot Request] Waiting for snapshot completion...");
+    if rx.recv().is_ok() {
+      eprintln!("[Snapshot Request] Snapshot completed!");
+    }
   }
 
   pub fn set_level(&self, level: LogLevel) {
@@ -269,7 +293,7 @@ impl Trace {
       // Handle control messages with timeout to allow periodic snapshots
       match receiver.recv_timeout(periodic_flush_interval) {
         Ok(msg) => match msg {
-          Message::SnapshotImmediate(reason) => {
+          Message::SnapshotImmediate(reason, ack) => {
             eprintln!(
               "[Snapshot] Requested: {} (buffer has {} events)",
               reason,
@@ -287,6 +311,7 @@ impl Trace {
             } else {
               eprintln!("[Snapshot] buffer empty, skipping snapshot");
             }
+            let _ = ack.send(());
           },
           Message::FlushAndExit => {
             eprintln!("[Trace] Received shutdown signal");
@@ -399,6 +424,23 @@ impl Clone for Trace {
       level: AtomicU8::new(self.level.load(Ordering::Relaxed)),
       interner: Arc::clone(&self.interner),
       listener_sender: self.listener_sender.clone(),
+      write_thread: None,
+      listener_thread: None,
+    }
+  }
+}
+
+impl Drop for Trace {
+  fn drop(&mut self) {
+    // If shutdown wasn't called explicitly
+    let _ = self.listener_sender.try_send(ListenerMessage::Shutdown);
+    let _ = self.sender.try_send(Message::FlushAndExit);
+
+    if let Some(handle) = self.write_thread.take() {
+      let _ = handle.join();
+    }
+    if let Some(handle) = self.listener_thread.take() {
+      let _ = handle.join();
     }
   }
 }

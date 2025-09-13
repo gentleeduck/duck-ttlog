@@ -31,3 +31,27 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
 
   Ok(())
 }
+
+// struct Node {
+//   parent: std::cell::RefCell<std::rc::Weak<Node>>,
+//   name: String,
+//   children: std::cell::RefCell<Vec<std::rc::Rc<Node>>>,
+// }
+//
+// impl Node {
+//   fn new(name: &str) -> std::rc::Rc<Node> {
+//     std::rc::Rc::new(Node {
+//       parent: std::cell::RefCell::new(std::rc::Weak::new()),
+//       name: name.to_string(),
+//       children: std::cell::RefCell::new(Vec::new()),
+//     })
+//   }
+// }
+//
+// fn foo() {
+//   let leaf = Node::new("leaf");
+//   let branch = Node::new("branch");
+//
+//   *branch.parent.borrow_mut() = std::rc::Rc::downgrade(&leaf);
+//   leaf.children.borrow_mut().push(branch);
+// }
