@@ -191,6 +191,8 @@ impl Trace {
     if let Some(handle) = self.listener_thread.take() {
       let _ = handle.join();
     }
+
+    eprintln!("[Trace] Shutdown completed");
   }
 
   pub fn get_sender(&self) -> Sender<Message> {
