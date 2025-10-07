@@ -27,7 +27,7 @@ pub struct ResolvedEvent {
   pub packed_meta: u64,
   pub message: String,
   pub target: String,
-  pub kv: Option<smallvec::SmallVec<[u8; 128]>>,
+  pub kv: serde_json::Value,
   pub file: String,
   pub position: (u32, u32),
 }
@@ -76,10 +76,20 @@ impl SnapshotWriter {
           },
         };
 
-        let kv = event
-          .kv_id
-          .and_then(|id| interner.get_kv(id.get()))
-          .map(|s| s);
+        let kv = event.kv_id.and_then(|id| interner.get_kv(id.get()));
+        let kv_data = if let Some(kv_bytes) = kv {
+          if let Ok(kv_str) = std::str::from_utf8(&kv_bytes) {
+            if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(kv_str) {
+              serde_json::json!(&parsed)
+            } else {
+              serde_json::json!({})
+            }
+          } else {
+            serde_json::json!({})
+          }
+        } else {
+          serde_json::json!({})
+        };
 
         let file = match interner.get_file(event.file_id) {
           Some(f) => f.to_string(),
@@ -95,7 +105,7 @@ impl SnapshotWriter {
           file,
           message,
           target,
-          kv: kv.map(|arc| (*arc).clone()),
+          kv: kv_data,
         })
       })
       .collect();
@@ -162,6 +172,7 @@ impl SnapshotWriter {
     interner: Arc<StringInterner>,
   ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(snapshot) = self.create_snapshot(ring, reason, interner) {
+      println!("[Snapshot] Snapshot written to {:#?}", snapshot);
       self.write_snapshot(&snapshot)
     } else {
       println!("[Snapshot] No events to snapshot");

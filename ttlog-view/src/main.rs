@@ -1,11 +1,13 @@
 mod events_graph_widget;
-mod logs_graph_widget;
+mod logs;
+mod logs_chart_widget;
 mod logs_widget;
 mod main_widget;
-mod snapshot_read;
 mod snapshot_widget;
+mod snapshots;
 mod system_info_widget;
 mod tabs_widget;
+mod utils;
 mod widget;
 
 use ratatui::{
@@ -19,9 +21,10 @@ use ratatui::{
 use rand::Rng;
 
 use crate::{
-  events_graph_widget::EventsGraphWidget, logs_graph_widget::LogsGraphWidget,
+  events_graph_widget::EventsGraphWidget, logs::Logs, logs_chart_widget::LogsChartWidget,
   logs_widget::LogsWidget, main_widget::MainWidget, snapshot_widget::SnapshotWidget,
-  system_info_widget::SystemInfoWidget, tabs_widget::ListWidget, widget::Widget,
+  snapshots::Snapshots, system_info_widget::SystemInfoWidget, tabs_widget::ListWidget,
+  widget::Widget,
 };
 
 fn main() -> color_eyre::Result<()> {
@@ -37,19 +40,22 @@ struct AppState {
 }
 
 fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
+  let logs_vec = Logs::get_logs("tmp/ttlog.log");
+  let snapshots = Snapshots::read_snapshots("./tmp").unwrap_or_default();
+
   let mut app_state = AppState { focused_widget: 0 };
   let mut main = MainWidget::new();
   let mut list = ListWidget::new();
-  let mut logs = LogsWidget::new();
-  let mut logs_graph = LogsGraphWidget::new();
-  let mut snapshots = SnapshotWidget::new();
-  let mut snapshots_events = LogsWidget::new().with_events(vec![]);
+  let mut logs = LogsWidget::new(&logs_vec);
+  let mut logs_chart = LogsChartWidget::new(&logs_vec);
+  let mut snapshots = SnapshotWidget::new(&snapshots);
+  // let mut snapshots_events = LogsWidget::new(&logs_vec);
   let mut events_graph = EventsGraphWidget::new();
   let mut system_info = SystemInfoWidget::new();
 
   list.focused = app_state.focused_widget == list.id;
   logs.focused = app_state.focused_widget == logs.id;
-  logs_graph.focused = app_state.focused_widget == logs_graph.id;
+  logs_chart.focused = app_state.focused_widget == logs_chart.id;
   snapshots.focused = app_state.focused_widget == snapshots.id;
   events_graph.focused = app_state.focused_widget == events_graph.id;
   system_info.focused = app_state.focused_widget == system_info.id;
@@ -62,11 +68,11 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         &mut main,
         &mut list,
         &mut logs,
-        &mut logs_graph,
+        &mut logs_chart,
         &mut snapshots,
         &mut events_graph,
         &mut system_info,
-        &mut snapshots_events,
+        // &mut snapshots_events,
       )
     })?;
 
@@ -80,7 +86,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
               app_state.focused_widget = (app_state.focused_widget + 1) % 6;
               list.focused = app_state.focused_widget == list.id;
               logs.focused = app_state.focused_widget == logs.id;
-              logs_graph.focused = app_state.focused_widget == logs_graph.id;
+              logs_chart.focused = app_state.focused_widget == logs_chart.id;
               snapshots.focused = app_state.focused_widget == snapshots.id;
               events_graph.focused = app_state.focused_widget == events_graph.id;
               system_info.focused = app_state.focused_widget == system_info.id;
@@ -89,7 +95,7 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
               app_state.focused_widget = (app_state.focused_widget + 6 - 1) % 6;
               list.focused = app_state.focused_widget == list.id;
               logs.focused = app_state.focused_widget == logs.id;
-              logs_graph.focused = app_state.focused_widget == logs_graph.id;
+              logs_chart.focused = app_state.focused_widget == logs_chart.id;
               snapshots.focused = app_state.focused_widget == snapshots.id;
               events_graph.focused = app_state.focused_widget == events_graph.id;
               system_info.focused = app_state.focused_widget == system_info.id;
@@ -98,18 +104,18 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
           }
           list.on_key(k);
           logs.on_key(k);
-          logs_graph.on_key(k);
+          logs_chart.on_key(k);
           snapshots.on_key(k);
-          snapshots_events.on_key(k);
+          // snapshots_events.on_key(k);
           events_graph.on_key(k);
           system_info.on_key(k);
         },
         Event::Mouse(m) => {
           list.on_mouse(m);
           logs.on_mouse(m);
-          logs_graph.on_mouse(m);
+          logs_chart.on_mouse(m);
           snapshots.on_mouse(m);
-          snapshots_events.on_mouse(m);
+          // snapshots_events.on_mouse(m);
           events_graph.on_mouse(m);
           system_info.on_mouse(m);
         },
@@ -130,11 +136,11 @@ pub fn reader_ui(
   main: &mut MainWidget,
   list: &mut ListWidget,
   logs: &mut LogsWidget,
-  logs_graph: &mut LogsGraphWidget,
+  logs_chart: &mut LogsChartWidget,
   snapshots: &mut SnapshotWidget,
   events_graph: &mut EventsGraphWidget,
   system_info: &mut SystemInfoWidget,
-  snapshots_events: &mut LogsWidget,
+  // snapshots_events: &mut LogsWidget,
 ) {
   let area = f.area();
 
@@ -179,7 +185,7 @@ pub fn reader_ui(
   // Render Left Side Widgets
   list.render(f, left_side_l_1[0]);
   logs.render(f, lef_side_l_2[0]);
-  logs_graph.render(f, lef_side_l_2[1]);
+  logs_chart.render(f, lef_side_l_2[1]);
 
   // Render Right Side Widgets
   events_graph.render(f, right_side_l_1[0]);

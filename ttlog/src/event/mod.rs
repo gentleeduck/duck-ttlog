@@ -147,6 +147,7 @@ impl LogEvent {
     // it will be overwritten as field_count increases
   }
 
+  /// return the timestamp and level and thread id from the packed meta
   #[inline]
   pub fn unpack_meta(meta: u64) -> (u64, u8, u8) {
     let timestamp = meta >> 12;

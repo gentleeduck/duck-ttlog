@@ -1,4 +1,5 @@
-use crossterm::event::{KeyCode, MouseEvent};
+mod render;
+
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
   style::{Color, Modifier, Style},
@@ -10,9 +11,11 @@ use ratatui::{
   Frame,
 };
 
-use crate::{logs_widget::LogsWidget, snapshot_read::SnapshotFile, widget::Widget};
-use chrono::{DateTime, TimeZone, Utc};
-use ttlog::{event::LogLevel, snapshot::ResolvedEvent};
+use crate::{logs_widget::LogsWidget, snapshots::SnapshotFile, utils::Utils};
+use ttlog::{
+  event::{LogEvent, LogLevel},
+  snapshot::ResolvedEvent,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortBy {
@@ -33,14 +36,14 @@ pub enum ViewState {
   Search,
   Help,
   SnapshotDetail,
-  EventDetail, // New state for viewing individual event details
+  EventDetail,
 }
 
-pub struct SnapshotWidget {
+pub struct SnapshotWidget<'a> {
   // Core data
   pub id: u8,
   pub title: &'static str,
-  pub snapshots: Vec<SnapshotFile>,
+  pub snapshots: &'a Vec<SnapshotFile>,
 
   // State
   pub view_state: ViewState,
@@ -73,16 +76,16 @@ pub struct SnapshotWidget {
   // UI state
   pub area: Option<Rect>,
   pub table_state: TableState,
-  pub events_table_state: TableState, // New table state for events
-  pub events_widget: Option<LogsWidget>,
+  pub events_table_state: TableState,
+  pub events_widget: Option<LogsWidget<'a>>,
 }
 
-impl SnapshotWidget {
-  pub fn new() -> Self {
+impl<'a> SnapshotWidget<'a> {
+  pub fn new(snapshots: &'a Vec<SnapshotFile>) -> Self {
     let mut widget = Self {
       id: 5,
       title: "~ System Snapshots ~──",
-      snapshots: crate::snapshot_read::read_snapshots().unwrap_or_default(),
+      snapshots,
       view_state: ViewState::Normal,
       focused: false,
       paused: false,
@@ -110,11 +113,6 @@ impl SnapshotWidget {
     widget
   }
 
-  fn format_timestamp(timestamp_str: &str) -> String {
-    // Assume the timestamp is already formatted, or parse and reformat if needed
-    timestamp_str.to_string()
-  }
-
   // Get events from current snapshot
   fn get_current_snapshot_events(&self) -> Option<&[ResolvedEvent]> {
     let snapshots = self.filtered_and_sorted_snapshots();
@@ -128,36 +126,6 @@ impl SnapshotWidget {
     self
       .get_current_snapshot_events()
       .and_then(|events| events.get(self.events_selected_row))
-  }
-
-  // Event helpers
-  fn ev_timestamp_millis(ev: &ResolvedEvent) -> u64 {
-    ev.packed_meta >> 12
-  }
-
-  fn ev_level(ev: &ResolvedEvent) -> LogLevel {
-    unsafe { std::mem::transmute(((ev.packed_meta >> 8) & 0xF) as u8) }
-  }
-
-  fn level_name(level: LogLevel) -> &'static str {
-    match level {
-      LogLevel::FATAL => "FATAL",
-      LogLevel::ERROR => "ERROR",
-      LogLevel::WARN => "WARN",
-      LogLevel::INFO => "INFO",
-      LogLevel::DEBUG => "DEBUG",
-      LogLevel::TRACE => "TRACE",
-    }
-  }
-
-  fn format_event_timestamp(ms: u64) -> String {
-    let secs = (ms / 1000) as i64;
-    let sub_ms = (ms % 1000) as u32;
-    let dt: DateTime<Utc> = Utc
-      .timestamp_opt(secs, sub_ms * 1_000_000)
-      .single()
-      .unwrap_or_else(|| Utc.timestamp_opt(0, 0).earliest().unwrap());
-    dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
   }
 
   // Events navigation
@@ -241,8 +209,12 @@ impl SnapshotWidget {
 
   fn get_event_detail_content_height(&self) -> Option<u16> {
     if let Some(event) = self.get_selected_event() {
-      let json_content = serde_json::to_string_pretty(event).ok()?;
-      Some(json_content.lines().count() as u16)
+      // Convert to JSON string
+      let json_content = serde_json::to_string(event).ok()?;
+
+      // Now you can use resolved fields safely
+      let pretty_json = serde_json::to_string_pretty(&json_content).ok()?;
+      Some(pretty_json.lines().count() as u16)
     } else {
       None
     }
@@ -642,7 +614,7 @@ impl SnapshotWidget {
         // Create Time
         if self.show_timestamps {
           cells.push(
-            Cell::from(Self::format_timestamp(&snapshot.create_at))
+            Cell::from(Utils::format_timestamp_from_string(&snapshot.create_at))
               .style(Style::default().fg(Color::Gray)),
           );
         }
@@ -759,8 +731,7 @@ impl SnapshotWidget {
       .iter()
       .enumerate()
       .map(|(i, event)| {
-        let event_type = Self::level_name(Self::ev_level(event)).to_string();
-        let timestamp = Self::format_event_timestamp(Self::ev_timestamp_millis(event));
+        let (timestamp, level, _) = LogEvent::unpack_meta(event.packed_meta);
         let mut summary = event.message.clone();
         if summary.len() > 50 {
           summary.truncate(47);
@@ -769,8 +740,8 @@ impl SnapshotWidget {
 
         Row::new(vec![
           Cell::from(format!("{}", i + 1)),
-          Cell::from(event_type),
-          Cell::from(timestamp),
+          Cell::from(LogLevel::from_u8(&level).as_str()),
+          Cell::from(Utils::format_timestamp(timestamp)),
           Cell::from(summary),
         ])
       })
@@ -812,8 +783,28 @@ impl SnapshotWidget {
     f.render_widget(Clear, popup_area);
 
     if let Some(event) = self.get_selected_event() {
-      let json_content = serde_json::to_string_pretty(event)
-        .unwrap_or_else(|_| "Failed to serialize event data".to_string());
+      // Convert to JSON string
+      let json_content = serde_json::to_string(event).unwrap();
+
+      // Deserialize it into a strongly typed struct
+      let resolved: ResolvedEvent = serde_json::from_str(&json_content).unwrap();
+      let (timestamp, level, thread_id) = LogEvent::unpack_meta(resolved.packed_meta);
+      let level = LogLevel::from_u8(&level);
+      let timestamp = Utils::format_timestamp(timestamp);
+
+      let json = serde_json::json!({
+        "level": level,
+        "timestamp": timestamp,
+        "thread_id": thread_id,
+        "message": resolved.message,
+        "target": resolved.target,
+        "kv": resolved.kv,
+        "file": resolved.file,
+        "position": resolved.position,
+      });
+
+      let json_content = serde_json::to_string_pretty(&json).unwrap();
+
       let total_lines = json_content.lines().count() as u16;
 
       let block = Block::default()
@@ -907,257 +898,5 @@ impl SnapshotWidget {
       .alignment(Alignment::Left);
 
     f.render_widget(help_paragraph, popup_area);
-  }
-
-  // Sample data generator removed: we now load real snapshots via `snapshot_read::read_snapshots()`.
-}
-
-impl Widget for SnapshotWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
-    self.area = Some(area);
-    // Temporarily move out the table state to avoid borrowing conflicts
-    let mut table_state = std::mem::take(&mut self.table_state);
-
-    // Compute filtered count and update local table_state selection
-    let filtered_count = self.filtered_and_sorted_snapshots().len();
-    if self.follow_tail && filtered_count > 0 {
-      table_state.select(Some(filtered_count - 1));
-    } else if filtered_count > 0 {
-      table_state.select(Some(self.selected_row.min(filtered_count - 1)));
-    } else {
-      table_state.select(None);
-    }
-
-    // Build the main block and table
-    let title_line = self.build_title_line();
-    let block = Block::default()
-      .title(title_line)
-      .borders(Borders::ALL)
-      .border_type(BorderType::Rounded)
-      .border_style(if self.focused {
-        Style::default().fg(Color::Cyan)
-      } else {
-        Style::default().fg(Color::White)
-      });
-
-    // Build table components
-    let constraints = self.build_table_constraints();
-    let header = self.build_table_header();
-    let rows = self.build_table_rows();
-
-    let table = Table::new(rows, &constraints)
-      .header(header)
-      .block(block)
-      .highlight_style(if self.focused {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
-      } else {
-        Style::default().fg(Color::Black).bg(Color::Blue)
-      });
-
-    // Render main table with the local table_state
-    f.render_stateful_widget(table, area, &mut table_state);
-
-    // Put the table state back
-    self.table_state = table_state;
-
-    // Render control line
-    let control_line = self.build_control_line();
-    let control_paragraph = Paragraph::new(Text::from(control_line)).alignment(Alignment::Right);
-    let control_area = Rect {
-      x: area.x + (area.width / 2).saturating_sub(10),
-      y: area.y,
-      width: area.width / 2 + 10,
-      height: 1,
-    };
-    f.render_widget(control_paragraph, control_area);
-
-    // Render popups
-    match self.view_state {
-      ViewState::SnapshotDetail => {
-        self.render_dim_overlay(f, area);
-        self.render_snapshot_detail_popup(f, area);
-      },
-      ViewState::EventDetail => {
-        self.render_dim_overlay(f, area);
-        self.render_snapshot_detail_popup(f, area);
-        self.render_event_detail_popup(f, area);
-      },
-      ViewState::Help => {
-        self.render_dim_overlay(f, area);
-        self.render_help_popup(f, area);
-      },
-      _ => {},
-    }
-  }
-
-  fn on_key(&mut self, key: crossterm::event::KeyEvent) {
-    if !self.focused {
-      return;
-    }
-
-    match self.view_state {
-      ViewState::EventDetail => self.handle_event_detail_keys(key),
-      ViewState::SnapshotDetail => self.handle_snapshot_detail_keys(key),
-      ViewState::Help => self.handle_help_keys(key),
-      ViewState::Search => self.handle_search_keys(key),
-      ViewState::Normal => self.handle_normal_keys(key),
-    }
-  }
-
-  fn on_mouse(&mut self, _event: MouseEvent) {
-    // Mouse handling can be implemented here if needed
-    // For now, we'll leave it empty but store the area for future use
-  }
-}
-
-// Key handling implementation
-impl SnapshotWidget {
-  fn handle_event_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      KeyCode::Esc => {
-        self.view_state = ViewState::SnapshotDetail;
-        self.events_scroll_offset = 0;
-      },
-      KeyCode::Up | KeyCode::Char('k') => self.scroll_event_detail_up(),
-      KeyCode::Down | KeyCode::Char('j') => self.scroll_event_detail_down(),
-      KeyCode::PageUp => self.scroll_event_detail_page_up(),
-      KeyCode::PageDown => self.scroll_event_detail_page_down(),
-      KeyCode::Home => self.scroll_event_detail_to_top(),
-      KeyCode::End => self.scroll_event_detail_to_bottom(),
-      _ => {},
-    }
-  }
-
-  fn handle_snapshot_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
-    let events = self.get_current_snapshot_events();
-
-    let has_events = events.map_or(false, |e| !e.is_empty());
-    if has_events {
-      // Handle events table navigation
-      match key.code {
-        KeyCode::Esc => {
-          self.view_state = ViewState::Normal;
-          self.scroll_offset = 0;
-          self.events_selected_row = 0;
-          self.events_table_state.select(Some(0));
-        },
-        KeyCode::Up | KeyCode::Char('k') => self.move_events_cursor_up(),
-        KeyCode::Down | KeyCode::Char('j') => self.move_events_cursor_down(),
-        KeyCode::PageUp => self.events_page_up(),
-        KeyCode::PageDown => self.events_page_down(),
-        KeyCode::Home => self.events_go_to_top(),
-        KeyCode::End => self.events_go_to_bottom(),
-        KeyCode::Enter => {
-          if has_events {
-            self.view_state = ViewState::EventDetail;
-            self.events_scroll_offset = 0;
-          }
-        },
-        _ => {},
-      }
-    } else {
-      // Handle original snapshot detail scrolling
-      match key.code {
-        KeyCode::Esc => {
-          self.view_state = ViewState::Normal;
-          self.scroll_offset = 0;
-        },
-        KeyCode::Up | KeyCode::Char('k') => self.scroll_popup_up(),
-        KeyCode::Down | KeyCode::Char('j') => self.scroll_popup_down(),
-        KeyCode::PageUp => self.scroll_popup_page_up(),
-        KeyCode::PageDown => self.scroll_popup_page_down(),
-        KeyCode::Home => self.scroll_popup_to_top(),
-        KeyCode::End => self.scroll_popup_to_bottom(),
-        _ => {},
-      }
-    }
-  }
-
-  fn handle_help_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
-        self.view_state = ViewState::Normal;
-      },
-      _ => {},
-    }
-  }
-
-  fn handle_search_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      KeyCode::Char(c) => {
-        self.search_query.push(c);
-      },
-      KeyCode::Backspace => {
-        self.search_query.pop();
-      },
-      KeyCode::Enter | KeyCode::Esc => {
-        self.view_state = ViewState::Normal;
-      },
-      _ => {},
-    }
-  }
-
-  fn handle_normal_keys(&mut self, key: crossterm::event::KeyEvent) {
-    if let Some(widget) = self.events_widget.as_mut() {
-      widget.on_key(key);
-    }
-
-    match key.code {
-      // Navigation
-      KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
-      KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(),
-      KeyCode::PageUp => self.page_up(),
-      KeyCode::PageDown => self.page_down(),
-      KeyCode::Home => self.go_to_top(),
-      KeyCode::End => self.go_to_bottom(),
-
-      // View snapshot detail
-      KeyCode::Enter => {
-        if !self.filtered_and_sorted_snapshots().is_empty() {
-          self.view_state = ViewState::SnapshotDetail;
-          self.scroll_offset = 0;
-          self.events_selected_row = 0;
-          self.events_table_state.select(Some(0));
-        }
-      },
-
-      // Search
-      KeyCode::Char('/') => {
-        self.view_state = ViewState::Search;
-      },
-      KeyCode::Char('n') => {
-        if !self.search_query.is_empty() {
-          self.move_cursor_down(); // Simple next implementation
-        }
-      },
-      KeyCode::Char('N') => {
-        if !self.search_query.is_empty() {
-          self.move_cursor_up(); // Simple previous implementation
-        }
-      },
-
-      // Sorting
-      KeyCode::Char('s') => self.cycle_sort_column(),
-      KeyCode::Char('r') => self.toggle_sort_order(),
-      KeyCode::Char('c') => self.clear_all_filters(),
-
-      // View options
-      KeyCode::Char('t') => self.show_timestamps = !self.show_timestamps,
-      KeyCode::Char('w') => self.wrap_lines = !self.wrap_lines,
-      KeyCode::Char('#') => self.show_line_numbers = !self.show_line_numbers,
-      KeyCode::Char('f') => self.follow_tail = !self.follow_tail,
-      KeyCode::Char(' ') => self.paused = !self.paused,
-
-      // Bookmarks
-      KeyCode::Char('b') => self.toggle_bookmark(),
-      KeyCode::Char('B') => self.jump_to_next_bookmark(),
-
-      // Help
-      KeyCode::Char('?') => {
-        self.view_state = ViewState::Help;
-      },
-
-      _ => {},
-    }
   }
 }
