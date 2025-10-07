@@ -17,12 +17,12 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   trace.set_level(ttlog::event::LogLevel::TRACE);
 
   // Step 2: Use standard tracing macros to log
-  trace!("Application started successfully");
-  debug!("Application started successfullyy");
-  info!("Application started successfullyyy");
-  warn!("Application started successfullyyyy");
-  error!("An error occurred in the DB it might be shutting down");
-  fatal!("An error occurred in the DB it might be shutting down");
+  // trace!("Application started successfully");
+  // debug!("Application started successfullyy");
+  // info!("Application started successfullyyy");
+  // warn!("Application started successfullyyyy");
+  // error!("An error occurred in the DB it might be shutting down");
+  // fatal!("An error occurred in the DB it might be shutting down");
 
   // Step 3: Log with structured data
   let user_id = 42;

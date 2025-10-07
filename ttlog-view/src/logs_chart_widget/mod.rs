@@ -1,4 +1,5 @@
-use crossterm::event::KeyCode;
+mod render;
+
 use ratatui::{
   layout::{Alignment, Rect},
   style::{Color, Style},
@@ -6,10 +7,9 @@ use ratatui::{
   widgets::{Block, BorderType, Borders, Paragraph},
   Frame,
 };
-use smallvec::SmallVec;
-use ttlog::{event::LogLevel, snapshot::ResolvedEvent};
+use ttlog::event::LogLevel;
 
-use crate::widget::Widget;
+use crate::logs::ResolvedLog;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TimeRange {
@@ -22,10 +22,10 @@ pub enum TimeRange {
   All,
 }
 
-pub struct LogsGraphWidget {
+pub struct LogsChartWidget<'a> {
   pub id: u8,
   pub title: &'static str,
-  pub events: Vec<ResolvedEvent>,
+  pub logs: &'a Vec<ResolvedLog>,
   pub time_range: TimeRange,
 
   // toggles
@@ -39,74 +39,12 @@ pub struct LogsGraphWidget {
   pub focused: bool,
 }
 
-impl LogsGraphWidget {
-  pub fn new() -> Self {
-    let events = || {
-      let log_levels = [
-        LogLevel::ERROR,
-        LogLevel::WARN,
-        LogLevel::INFO,
-        LogLevel::DEBUG,
-        LogLevel::TRACE,
-        LogLevel::FATAL,
-      ];
-
-      (0..50)
-        .map(|i| {
-          let level = log_levels[i % log_levels.len()];
-          ResolvedEvent {
-            // synthetic packed_meta: timestamp in high bits, level in bits [8..12]
-            packed_meta: ((i as u64) << 12) | ((level as u64) << 8),
-            message: format!(
-              "[{}] Simulated log message {}",
-              match level {
-                LogLevel::FATAL => "FATAL",
-                LogLevel::ERROR => "ERROR",
-                LogLevel::WARN => "WARN",
-                LogLevel::INFO => "INFO",
-                LogLevel::DEBUG => "DEBUG",
-                LogLevel::TRACE => "TRACE",
-              },
-              i
-            ),
-            target: format!(
-              "{}::module{}",
-              match level {
-                LogLevel::FATAL => "main",
-                LogLevel::ERROR => "service",
-                LogLevel::WARN => "controller",
-                LogLevel::INFO => "api",
-                LogLevel::DEBUG => "worker",
-                LogLevel::TRACE => "internal",
-              },
-              i % 3
-            ),
-            kv: Some(SmallVec::from_vec(vec![
-              (i % 255) as u8,
-              (i * 2 % 255) as u8,
-              (i * 3 % 255) as u8,
-            ])),
-            file: format!(
-              "{}.rs",
-              match level {
-                LogLevel::FATAL => "fatales",
-                LogLevel::ERROR => "errors",
-                LogLevel::WARN => "warnings",
-                LogLevel::INFO => "infos",
-                LogLevel::DEBUG => "debugs",
-                LogLevel::TRACE => "traces",
-              }
-            ),
-            position: (i as u32, (i * 7 % 100) as u32),
-          }
-        })
-        .collect()
-    };
-
+impl<'a> LogsChartWidget<'a> {
+  pub fn new(logs: &'a Vec<ResolvedLog>) -> Self {
     Self {
       id: 2,
       title: "~ Logs (bars) ~",
-      events: events(),
+      logs,
       time_range: TimeRange::All,
       show_total: false, // default off
       show_fatal: true,
@@ -119,45 +57,9 @@ impl LogsGraphWidget {
     }
   }
 
-  pub fn with_events(mut self, events: Vec<ResolvedEvent>) -> Self {
-    self.events = events;
-    self
-  }
-
-  #[inline]
-  fn event_ts_secs(e: &ResolvedEvent) -> u64 {
-    // same extraction as original: packed_meta >> 12 is ms since epoch
-    (e.packed_meta >> 12) / 1000
-  }
-
-  #[inline]
-  fn event_level(e: &ResolvedEvent) -> LogLevel {
-    let raw = ((e.packed_meta >> 8) & 0xF) as u8;
-    LogLevel::from_u8(&raw)
-  }
-
-  fn cutoff_secs(&self) -> u64 {
-    let now = std::time::SystemTime::now()
-      .duration_since(std::time::UNIX_EPOCH)
-      .unwrap()
-      .as_secs();
-
-    match self.time_range {
-      TimeRange::Last5Min => now - 5 * 60,
-      TimeRange::Last15Min => now - 15 * 60,
-      TimeRange::Last1Hour => now - 60 * 60,
-      TimeRange::Last6Hours => now - 6 * 60 * 60,
-      TimeRange::Last24Hours => now - 24 * 60 * 60,
-      TimeRange::Last7Days => now - 7 * 24 * 60 * 60,
-      TimeRange::All => 0,
-    }
-  }
-
   /// Aggregate counts across the filtered events.
   /// Returns (total, fatal, errors, warnings, info, debug, trace).
   fn aggregate_counts(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
-    let cutoff = self.cutoff_secs();
-
     let mut total = 0u64;
     let mut fatal = 0u64;
     let mut errors = 0u64;
@@ -166,13 +68,9 @@ impl LogsGraphWidget {
     let mut debug = 0u64;
     let mut trace = 0u64;
 
-    for ev in &self.events {
-      let ts = Self::event_ts_secs(ev);
-      if ts < cutoff {
-        continue;
-      }
+    for ev in self.logs {
       total += 1;
-      match Self::event_level(ev) {
+      match ev.level {
         LogLevel::FATAL => fatal += 1,
         LogLevel::ERROR => errors += 1,
         LogLevel::WARN => warns += 1,
@@ -466,59 +364,5 @@ impl LogsGraphWidget {
       height: 1,
     };
     f.render_widget(total_text, total_rect);
-  }
-}
-
-impl Widget for LogsGraphWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
-    // draw chart + separator + right panel + overlays
-    self.render_colored_bars(f, area);
-  }
-
-  fn on_key(&mut self, key: crossterm::event::KeyEvent) {
-    if !self.focused {
-      return;
-    }
-
-    match key.code {
-      KeyCode::Char('t') => {
-        self.time_range = match self.time_range {
-          TimeRange::Last5Min => TimeRange::Last15Min,
-          TimeRange::Last15Min => TimeRange::Last1Hour,
-          TimeRange::Last1Hour => TimeRange::Last6Hours,
-          TimeRange::Last6Hours => TimeRange::Last24Hours,
-          TimeRange::Last24Hours => TimeRange::Last7Days,
-          TimeRange::Last7Days => TimeRange::All,
-          TimeRange::All => TimeRange::Last5Min,
-        };
-      },
-      KeyCode::Char('v') => {
-        // toggle total bar
-        self.show_total = !self.show_total;
-      },
-      KeyCode::Char('f') => {
-        self.show_fatal = !self.show_fatal;
-      },
-      KeyCode::Char('e') => {
-        self.show_errors = !self.show_errors;
-      },
-      KeyCode::Char('w') => {
-        self.show_warnings = !self.show_warnings;
-      },
-      KeyCode::Char('i') => {
-        self.show_info = !self.show_info;
-      },
-      KeyCode::Char('d') => {
-        self.show_debug = !self.show_debug;
-      },
-      KeyCode::Char('r') => {
-        self.show_trace = !self.show_trace;
-      },
-      _ => {},
-    }
-  }
-
-  fn on_mouse(&mut self, _me: crossterm::event::MouseEvent) {
-    // no-op
   }
 }

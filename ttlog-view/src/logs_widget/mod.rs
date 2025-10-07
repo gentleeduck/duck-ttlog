@@ -1,19 +1,19 @@
-use chrono::{DateTime, TimeZone, Utc};
-use crossterm::event::{KeyCode, MouseEvent};
+mod keydown;
+mod render;
+
+use crate::{logs::ResolvedLog, utils::Utils};
+
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
   style::{Color, Modifier, Style},
   text::{Line, Span, Text},
   widgets::{
     Block, BorderType, Borders, Cell, Clear, Paragraph, Row, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Table, TableState,
+    ScrollbarState, TableState,
   },
   Frame,
 };
-use smallvec::SmallVec;
-use ttlog::{event::LogLevel, snapshot::ResolvedEvent};
-
-use crate::widget::Widget;
+use ttlog::event::LogLevel;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortBy {
@@ -36,11 +36,11 @@ pub enum ViewState {
   LogDetail,
 }
 
-pub struct LogsWidget {
+pub struct LogsWidget<'a> {
   // Core data
   pub id: u8,
-  pub title: &'static str,
-  pub logs: Vec<ResolvedEvent>,
+  pub title: &'a str,
+  pub logs: &'a Vec<ResolvedLog>,
 
   // State
   pub view_state: ViewState,
@@ -73,12 +73,12 @@ pub struct LogsWidget {
   pub table_state: TableState,
 }
 
-impl LogsWidget {
-  pub fn new() -> Self {
+impl<'a> LogsWidget<'a> {
+  pub fn new(logs: &'a Vec<ResolvedLog>) -> Self {
     let mut widget = Self {
       id: 1,
       title: "~ System Logs ~──",
-      logs: Self::generate_sample_logs(),
+      logs,
       view_state: ViewState::Normal,
       focused: false,
       paused: false,
@@ -103,60 +103,34 @@ impl LogsWidget {
     widget
   }
 
-  pub fn with_events(mut self, events: Vec<ResolvedEvent>) -> Self {
-    self.logs = events;
+  pub fn with_events(mut self, logs: &'a Vec<ResolvedLog>) -> Self {
+    self.logs = logs;
     self.focused = true;
     self
   }
 
-  // Log event utility functions
-  fn ev_timestamp_millis(ev: &ResolvedEvent) -> u64 {
-    ev.packed_meta >> 12
-  }
-
-  fn ev_level(ev: &ResolvedEvent) -> LogLevel {
-    unsafe { std::mem::transmute(((ev.packed_meta >> 8) & 0xF) as u8) }
-  }
-
-  fn ev_thread_id(ev: &ResolvedEvent) -> u8 {
-    (ev.packed_meta & 0xFF) as u8
-  }
-
-  fn level_name(level: LogLevel) -> &'static str {
-    match level {
-      LogLevel::FATAL => "FATAL",
-      LogLevel::ERROR => "ERROR",
-      LogLevel::WARN => "WARN",
-      LogLevel::INFO => "INFO",
-      LogLevel::DEBUG => "DEBUG",
-      LogLevel::TRACE => "TRACE",
+  fn ev_timestamp_millis(event: &ResolvedLog) -> u64 {
+    // Parse the timestamp string to extract milliseconds
+    // The timestamp is in format "YYYY-MM-DD HH:MM:SS.sss"
+    if let Ok(dt) = chrono::DateTime::parse_from_str(&event.timestamp, "%Y-%m-%d %H:%M:%S%.3f %z") {
+      dt.timestamp_millis() as u64
+    } else if let Ok(dt) =
+      chrono::NaiveDateTime::parse_from_str(&event.timestamp, "%Y-%m-%d %H:%M:%S%.3f")
+    {
+      dt.timestamp_millis() as u64
+    } else {
+      // Fallback: try to parse as a simple timestamp or return 0
+      0
     }
   }
 
-  fn level_color(level: LogLevel) -> Color {
-    match level {
-      LogLevel::FATAL => Color::Red,
-      LogLevel::ERROR => Color::Magenta,
-      LogLevel::WARN => Color::Yellow,
-      LogLevel::INFO => Color::Green,
-      LogLevel::DEBUG => Color::Cyan,
-      LogLevel::TRACE => Color::Gray,
-    }
-  }
-
-  fn format_timestamp(ms: u64) -> String {
-    let secs = (ms / 1000) as i64;
-    let sub_ms = (ms % 1000) as u32;
-    let dt: DateTime<Utc> = Utc
-      .timestamp_opt(secs, sub_ms * 1_000_000)
-      .single()
-      .unwrap_or_else(|| Utc.timestamp_opt(0, 0).earliest().unwrap());
-    dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+  fn ev_level(event: &ResolvedLog) -> LogLevel {
+    event.level
   }
 
   // Data processing
-  fn filtered_and_sorted_logs(&self) -> Vec<(usize, &ResolvedEvent)> {
-    let mut filtered: Vec<(usize, &ResolvedEvent)> = self
+  fn filtered_and_sorted_logs(&self) -> Vec<(usize, &ResolvedLog)> {
+    let mut filtered: Vec<(usize, &ResolvedLog)> = self
       .logs
       .iter()
       .enumerate()
@@ -167,10 +141,10 @@ impl LogsWidget {
     filtered
   }
 
-  fn matches_filters(&self, event: &ResolvedEvent) -> bool {
+  fn matches_filters(&self, event: &ResolvedLog) -> bool {
     // Level filter
     if let Some(ref level_filter) = self.level_filter {
-      let event_level = Self::level_name(Self::ev_level(event));
+      let event_level = Utils::level_name(event.level);
       if event_level != level_filter.as_str() {
         return false;
       }
@@ -179,11 +153,9 @@ impl LogsWidget {
     // Search filter
     if !self.search_query.is_empty() {
       let query = self.search_query.to_lowercase();
-      let timestamp = Self::format_timestamp(Self::ev_timestamp_millis(event)).to_lowercase();
-      let level = Self::level_name(Self::ev_level(event)).to_lowercase();
 
-      return timestamp.contains(&query)
-        || level.contains(&query)
+      return event.timestamp.contains(&query)
+        || event.level.as_str().contains(&query)
         || event.message.to_lowercase().contains(&query)
         || event.target.to_lowercase().contains(&query)
         || event.file.to_lowercase().contains(&query);
@@ -192,7 +164,7 @@ impl LogsWidget {
     true
   }
 
-  fn sort_logs(&self, logs: &mut Vec<(usize, &ResolvedEvent)>) {
+  fn sort_logs(&self, logs: &mut Vec<(usize, &ResolvedLog)>) {
     match self.sort_by {
       SortBy::Time => {
         logs.sort_by(|a, b| {
@@ -564,11 +536,8 @@ impl LogsWidget {
     logs
       .iter()
       .map(|(original_idx, event)| {
-        let level = Self::ev_level(event);
-        let level_name = Self::level_name(level);
-        let level_color = Self::level_color(level);
-        let timestamp = Self::format_timestamp(Self::ev_timestamp_millis(event));
-        let thread_id = Self::ev_thread_id(event);
+        let level_name = Utils::level_name(event.level);
+        let level_color = Utils::level_color(event.level);
         let is_bookmarked = self.bookmarks.contains(original_idx);
 
         let mut cells = Vec::new();
@@ -585,7 +554,7 @@ impl LogsWidget {
 
         // Timestamp
         if self.show_timestamps {
-          cells.push(Cell::from(timestamp).style(Style::default().fg(Color::Gray)));
+          cells.push(Cell::from(event.timestamp.clone()).style(Style::default().fg(Color::Gray)));
         }
 
         // Level
@@ -605,8 +574,9 @@ impl LogsWidget {
         }
 
         // Thread ID
-        cells
-          .push(Cell::from(format!("{}", thread_id)).style(Style::default().fg(Color::DarkGray)));
+        cells.push(
+          Cell::from(format!("{}", event.thread_id)).style(Style::default().fg(Color::DarkGray)),
+        );
 
         // Message with file:line prefix
         let (line, col) = event.position;
@@ -743,247 +713,5 @@ impl LogsWidget {
       .alignment(Alignment::Left);
 
     f.render_widget(help_paragraph, popup_area);
-  }
-
-  // Sample data generator
-  fn generate_sample_logs() -> Vec<ResolvedEvent> {
-    let log_levels = [
-      LogLevel::ERROR,
-      LogLevel::WARN,
-      LogLevel::INFO,
-      LogLevel::DEBUG,
-      LogLevel::TRACE,
-      LogLevel::FATAL,
-    ];
-
-    (0..50)
-      .map(|i| {
-        let level = log_levels[i % log_levels.len()];
-        ResolvedEvent {
-          packed_meta: ((i as u64) << 12) | ((level as u64) << 8) | (i as u64),
-          message: format!("[{}] Simulated log message {}", Self::level_name(level), i),
-          target: match level {
-            LogLevel::FATAL => "main",
-            LogLevel::ERROR => "service",
-            LogLevel::WARN => "controller",
-            LogLevel::INFO => "api",
-            LogLevel::DEBUG => "worker",
-            LogLevel::TRACE => "internal",
-          }
-          .to_string(),
-          kv: Some(SmallVec::from_vec(vec![
-            (i % 255) as u8,
-            (i * 2 % 255) as u8,
-            (i * 3 % 255) as u8,
-          ])),
-          file: format!(
-            "{}.rs",
-            match level {
-              LogLevel::FATAL => "fatales",
-              LogLevel::ERROR => "errors",
-              LogLevel::WARN => "warnings",
-              LogLevel::INFO => "infos",
-              LogLevel::DEBUG => "debugs",
-              LogLevel::TRACE => "traces",
-            }
-          ),
-          position: (i as u32, (i * 7 % 100) as u32),
-        }
-      })
-      .collect()
-  }
-}
-
-impl Widget for LogsWidget {
-  fn render(&mut self, f: &mut Frame<'_>, area: Rect) {
-    self.area = Some(area);
-    // Temporarily move out the table state to avoid borrowing conflicts
-    let mut table_state = std::mem::take(&mut self.table_state);
-
-    // Compute filtered count and update local table_state selection
-    let filtered_count = self.filtered_and_sorted_logs().len();
-    if self.follow_tail && filtered_count > 0 {
-      table_state.select(Some(filtered_count - 1));
-    } else if filtered_count > 0 {
-      table_state.select(Some(self.selected_row.min(filtered_count - 1)));
-    } else {
-      table_state.select(None);
-    }
-
-    // Build the main block and table
-    let title_line = self.build_title_line();
-    let block = Block::default()
-      .title(title_line)
-      .borders(Borders::ALL)
-      .border_type(BorderType::Rounded)
-      .border_style(if self.focused {
-        Style::default().fg(Color::Cyan)
-      } else {
-        Style::default().fg(Color::White)
-      });
-
-    // Build table components
-    let constraints = self.build_table_constraints();
-    let header = self.build_table_header();
-    let rows = self.build_table_rows();
-
-    let table = Table::new(rows, &constraints)
-      .header(header)
-      .block(block)
-      .highlight_style(if self.focused {
-        Style::default().fg(Color::Black).bg(Color::Cyan)
-      } else {
-        Style::default().fg(Color::Black).bg(Color::Blue)
-      });
-
-    // Render main table with the local table_state
-    f.render_stateful_widget(table, area, &mut table_state);
-
-    // Put the table state back
-    self.table_state = table_state;
-
-    // Render control line
-    let control_line = self.build_control_line();
-    let control_paragraph = Paragraph::new(Text::from(control_line)).alignment(Alignment::Right);
-    let control_area = Rect {
-      x: area.x + (area.width / 2).saturating_sub(10),
-      y: area.y,
-      width: area.width / 2 + 10,
-      height: 1,
-    };
-    f.render_widget(control_paragraph, control_area);
-
-    // Render popups
-    match self.view_state {
-      ViewState::LogDetail => {
-        self.render_dim_overlay(f, area);
-        self.render_log_detail_popup(f, area);
-      },
-      ViewState::Help => {
-        self.render_dim_overlay(f, area);
-        self.render_help_popup(f, area);
-      },
-      _ => {},
-    }
-  }
-
-  fn on_key(&mut self, key: crossterm::event::KeyEvent) {
-    if !self.focused {
-      return;
-    }
-
-    match self.view_state {
-      ViewState::LogDetail => self.handle_log_detail_keys(key),
-      ViewState::Help => self.handle_help_keys(key),
-      ViewState::Search => self.handle_search_keys(key),
-      ViewState::Normal => self.handle_normal_keys(key),
-    }
-  }
-
-  fn on_mouse(&mut self, _event: MouseEvent) {
-    // Mouse handling can be implemented here if needed
-    // For now, we'll leave it empty but store the area for future use
-  }
-}
-
-// Key handling implementation
-impl LogsWidget {
-  fn handle_log_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      KeyCode::Esc => {
-        self.view_state = ViewState::Normal;
-        self.scroll_offset = 0;
-      },
-      KeyCode::Up | KeyCode::Char('k') => self.scroll_popup_up(),
-      KeyCode::Down | KeyCode::Char('j') => self.scroll_popup_down(),
-      KeyCode::PageUp => self.scroll_popup_page_up(),
-      KeyCode::PageDown => self.scroll_popup_page_down(),
-      KeyCode::Home => self.scroll_popup_to_top(),
-      KeyCode::End => self.scroll_popup_to_bottom(),
-      _ => {},
-    }
-  }
-
-  fn handle_help_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
-        self.view_state = ViewState::Normal;
-      },
-      _ => {},
-    }
-  }
-
-  fn handle_search_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      KeyCode::Char(c) => {
-        self.search_query.push(c);
-      },
-      KeyCode::Backspace => {
-        self.search_query.pop();
-      },
-      KeyCode::Enter | KeyCode::Esc => {
-        self.view_state = ViewState::Normal;
-      },
-      _ => {},
-    }
-  }
-
-  fn handle_normal_keys(&mut self, key: crossterm::event::KeyEvent) {
-    match key.code {
-      // Navigation
-      KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
-      KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(),
-      KeyCode::PageUp => self.page_up(),
-      KeyCode::PageDown => self.page_down(),
-      KeyCode::Home => self.go_to_top(),
-      KeyCode::End => self.go_to_bottom(),
-
-      // View log detail
-      KeyCode::Enter => {
-        if !self.filtered_and_sorted_logs().is_empty() {
-          self.view_state = ViewState::LogDetail;
-          self.scroll_offset = 0;
-        }
-      },
-
-      // Search
-      KeyCode::Char('/') => {
-        self.view_state = ViewState::Search;
-      },
-      KeyCode::Char('n') => {
-        if !self.search_query.is_empty() {
-          self.move_cursor_down(); // Simple next implementation
-        }
-      },
-      KeyCode::Char('N') => {
-        if !self.search_query.is_empty() {
-          self.move_cursor_up(); // Simple previous implementation
-        }
-      },
-
-      // Filtering and sorting
-      KeyCode::Char('l') => self.cycle_level_filter(),
-      KeyCode::Char('s') => self.cycle_sort_column(),
-      KeyCode::Char('r') => self.toggle_sort_order(),
-      KeyCode::Char('c') => self.clear_all_filters(),
-
-      // View options
-      KeyCode::Char('t') => self.show_timestamps = !self.show_timestamps,
-      KeyCode::Char('w') => self.wrap_lines = !self.wrap_lines,
-      KeyCode::Char('#') => self.show_line_numbers = !self.show_line_numbers,
-      KeyCode::Char('f') => self.follow_tail = !self.follow_tail,
-      KeyCode::Char(' ') => self.paused = !self.paused,
-
-      // Bookmarks
-      KeyCode::Char('b') => self.toggle_bookmark(),
-      KeyCode::Char('B') => self.jump_to_next_bookmark(),
-
-      // Help
-      KeyCode::Char('?') => {
-        self.view_state = ViewState::Help;
-      },
-
-      _ => {},
-    }
   }
 }
