@@ -10,6 +10,7 @@ use ratatui::{
 use ttlog::event::LogLevel;
 
 use crate::logs::ResolvedLog;
+use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TimeRange {
@@ -37,10 +38,18 @@ pub struct LogsChartWidget<'a> {
   pub show_debug: bool,
   pub show_trace: bool,
   pub focused: bool,
+  
+  // Performance optimization
+  pub cached_counts: Option<(u64, u64, u64, u64, u64, u64, u64)>,
+  pub last_calculation_time: Option<Instant>,
+  pub is_loading: bool,
+  pub has_data: bool,
+  pub processing_heavy_operation: bool,
 }
 
 impl<'a> LogsChartWidget<'a> {
   pub fn new(logs: &'a Vec<ResolvedLog>) -> Self {
+    let has_data = !logs.is_empty();
     Self {
       id: 2,
       title: "~ Logs (bars) ~",
@@ -54,12 +63,29 @@ impl<'a> LogsChartWidget<'a> {
       show_debug: true,
       show_trace: true,
       focused: false,
+      cached_counts: None,
+      last_calculation_time: None,
+      is_loading: false,
+      has_data,
+      processing_heavy_operation: false,
     }
   }
 
-  /// Aggregate counts across the filtered events.
+  /// Aggregate counts across the filtered events (cached version).
   /// Returns (total, fatal, errors, warnings, info, debug, trace).
-  fn aggregate_counts(&self) -> (u64, u64, u64, u64, u64, u64, u64) {
+  fn aggregate_counts(&mut self) -> (u64, u64, u64, u64, u64, u64, u64) {
+    // Return cached result if available
+    if let Some(cached) = self.cached_counts {
+      return cached;
+    }
+    
+    // Set loading state for heavy operations
+    if self.logs.len() > 1000 {
+      self.processing_heavy_operation = true;
+    }
+    
+    let start_time = Instant::now();
+    
     let mut total = 0u64;
     let mut fatal = 0u64;
     let mut errors = 0u64;
@@ -80,7 +106,35 @@ impl<'a> LogsChartWidget<'a> {
       }
     }
 
-    (total, fatal, errors, warns, info, debug, trace)
+    let result = (total, fatal, errors, warns, info, debug, trace);
+    
+    // Cache the result
+    self.cached_counts = Some(result);
+    self.last_calculation_time = Some(start_time);
+    self.processing_heavy_operation = false;
+    
+    result
+  }
+  
+  pub fn clear_cache(&mut self) {
+    self.cached_counts = None;
+    self.last_calculation_time = None;
+  }
+  
+  pub fn is_processing(&self) -> bool {
+    self.processing_heavy_operation || self.is_loading
+  }
+  
+  pub fn get_status_text(&self) -> String {
+    if self.is_loading {
+      "Loading chart data...".to_string()
+    } else if self.processing_heavy_operation {
+      "Processing...".to_string()
+    } else if !self.has_data {
+      "No data available".to_string()
+    } else {
+      format!("{} logs", self.logs.len())
+    }
   }
 
   fn format_time_range_label(&self) -> &'static str {
@@ -96,7 +150,7 @@ impl<'a> LogsChartWidget<'a> {
   }
 
   /// Build visible bars: (label, value, style)
-  fn build_bars(&self) -> Vec<(&'static str, u64, Style)> {
+  fn build_bars(&mut self) -> Vec<(&'static str, u64, Style)> {
     let (total, fatal, errors, warns, info, debug, trace) = self.aggregate_counts();
 
     let mut bars = Vec::new();
@@ -143,7 +197,7 @@ impl<'a> LogsChartWidget<'a> {
 
   /// Draw chart left, separator, right panel (40%), top overlays for total & range,
   /// and bottom shortcuts in right panel with separator + padding.
-  fn render_colored_bars(&self, f: &mut Frame<'_>, area: Rect) {
+  fn render_colored_bars(&mut self, f: &mut Frame<'_>, area: Rect) {
     let bars = self.build_bars();
     let n = bars.len() as usize;
     let (total, _, _, _, _, _, _) = self.aggregate_counts();

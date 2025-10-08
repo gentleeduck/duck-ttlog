@@ -3,6 +3,7 @@ mod render;
 
 use crate::{logs::ResolvedLog, utils::Utils};
 
+
 use ratatui::{
   layout::{Alignment, Constraint, Direction, Layout, Rect},
   style::{Color, Modifier, Style},
@@ -36,6 +37,8 @@ pub enum ViewState {
   LogDetail,
 }
 
+
+
 pub struct LogsWidget<'a> {
   // Core data
   pub id: u8,
@@ -46,6 +49,11 @@ pub struct LogsWidget<'a> {
   pub view_state: ViewState,
   pub focused: bool,
   pub paused: bool,
+  pub is_loading: bool,
+  pub has_data: bool,
+  pub error_message: Option<String>,
+
+
 
   // Selection and navigation
   pub selected_row: usize,
@@ -71,10 +79,31 @@ pub struct LogsWidget<'a> {
   // UI state
   pub area: Option<Rect>,
   pub table_state: TableState,
+  pub page_size: usize,
+  pub processing_heavy_operation: bool,
+  
+  // Performance optimization - simple caching
+  pub cached_filtered_logs: Option<Vec<(usize, ResolvedLog)>>,
+  pub cache_key: String,
+  pub page_size_limit: usize, // Limit rendering to improve performance
+  
+  // Virtualized rendering for millions of events
+  pub virtual_scroll_offset: usize, // Start index of visible window
+  pub virtual_window_size: usize,   // Number of visible rows
+  pub total_filtered_count: usize,  // Total number of filtered items
+  
+  // Background and on-demand loading
+  pub is_sample_data: bool,         // True if showing only sample data
+  pub full_data_loading: bool,      // True if full data is being loaded in background
+  pub load_more_requested: bool,    // True if user requested more data
 }
 
 impl<'a> LogsWidget<'a> {
   pub fn new(logs: &'a Vec<ResolvedLog>) -> Self {
+    let has_data = !logs.is_empty();
+
+    // If logs are empty, start in loading state
+    let is_loading = logs.is_empty();
     let mut widget = Self {
       id: 1,
       title: "~ System Logs ~──",
@@ -82,6 +111,10 @@ impl<'a> LogsWidget<'a> {
       view_state: ViewState::Normal,
       focused: false,
       paused: false,
+      is_loading,
+      has_data,
+      error_message: None,
+
       selected_row: 0,
       scroll_offset: 0,
       search_query: String::new(),
@@ -97,10 +130,50 @@ impl<'a> LogsWidget<'a> {
       bookmarks: Vec::new(),
       area: None,
       table_state: TableState::default(),
+      page_size: 20,
+      processing_heavy_operation: false,
+      cached_filtered_logs: None,
+      cache_key: String::new(),
+      page_size_limit: 100, // Limit to 100 visible logs for performance
+      virtual_scroll_offset: 0,
+      virtual_window_size: 20, // Only render 20 visible rows
+      total_filtered_count: 0,
+      is_sample_data: logs.len() <= 100, // Detect if we have sample data
+      full_data_loading: false,
+      load_more_requested: false,
     };
 
     widget.table_state.select(Some(0));
     widget
+  }
+  
+  // Method to update logs after async loading
+  pub fn update_logs(&mut self, new_logs: &'a Vec<ResolvedLog>) {
+    self.logs = new_logs;
+    self.has_data = !new_logs.is_empty();
+    self.is_loading = false;
+    self.error_message = None;
+    self.clear_cache(); // Clear cache when logs change
+    
+    // Reset selection if we now have data
+    if self.has_data {
+      self.table_state.select(Some(0));
+    }
+  }
+  
+  // Method to set loading state
+  pub fn set_loading_state(&mut self, loading: bool) {
+    self.is_loading = loading;
+    if loading {
+      self.error_message = None;
+    }
+  }
+  
+  // Method to set error state
+  pub fn set_error_state(&mut self, error: String) {
+    self.is_loading = false;
+    self.has_data = false;
+    self.error_message = Some(error);
   }
 
   pub fn with_events(mut self, logs: &'a Vec<ResolvedLog>) -> Self {
@@ -128,21 +201,145 @@ impl<'a> LogsWidget<'a> {
     event.level
   }
 
-  // Data processing
+  // Virtualized data processing - only return visible window
   fn filtered_and_sorted_logs(&self) -> Vec<(usize, &ResolvedLog)> {
+    // For very large datasets, use virtualized approach
+    if self.logs.len() > 10000 {
+      return self.get_virtualized_logs();
+    }
+    
+    // For large datasets, use cached approach
+    if self.logs.len() > 1000 {
+      return self.get_cached_filtered_logs();
+    }
+    
+    // For smaller datasets, use direct approach (faster)
+    self.compute_filtered_logs_direct()
+  }
+  
+  // Virtualized rendering - only compute and return visible rows
+  fn get_virtualized_logs(&self) -> Vec<(usize, &ResolvedLog)> {
+    // Get total count efficiently without materializing all results
+    let total_count = self.get_total_filtered_count_fast();
+    
+    // Calculate visible window bounds
+    let start_idx = self.virtual_scroll_offset;
+    let end_idx = (start_idx + self.virtual_window_size).min(total_count);
+    
+    if start_idx >= total_count {
+      return Vec::new();
+    }
+    
+    // Pre-compute search query once
+    let search_query_lower = if !self.search_query.is_empty() {
+      Some(self.search_query.to_lowercase())
+    } else {
+      None
+    };
+    
+    // Stream through logs and only collect the visible window
+    let mut visible_logs = Vec::with_capacity(self.virtual_window_size);
+    let mut current_idx = 0;
+    let mut collected = 0;
+    
+    for (original_idx, log) in self.logs.iter().enumerate() {
+      if self.matches_filters_optimized(log, &search_query_lower) {
+        if current_idx >= start_idx && collected < self.virtual_window_size {
+          visible_logs.push((original_idx, log));
+          collected += 1;
+          
+          if collected >= self.virtual_window_size {
+            break; // We have enough visible rows
+          }
+        }
+        current_idx += 1;
+        
+        if current_idx >= end_idx {
+          break; // We've passed the visible window
+        }
+      }
+    }
+    
+    // Sort only the visible rows (much faster)
+    self.sort_logs(&mut visible_logs);
+    visible_logs
+  }
+  
+  // Fast count without materializing results
+  fn get_total_filtered_count_fast(&self) -> usize {
+    if let Some(ref cached) = self.cached_filtered_logs {
+      return cached.len();
+    }
+    
+    // Pre-compute search query once
+    let search_query_lower = if !self.search_query.is_empty() {
+      Some(self.search_query.to_lowercase())
+    } else {
+      None
+    };
+    
+    // Count matching logs without collecting them
+    self.logs
+      .iter()
+      .filter(|log| self.matches_filters_optimized(log, &search_query_lower))
+      .count()
+  }
+  
+  fn get_cached_filtered_logs(&self) -> Vec<(usize, &ResolvedLog)> {
+    let current_key = self.get_cache_key();
+    
+    // Check if cache is valid
+    if let Some(ref cached) = self.cached_filtered_logs {
+      if self.cache_key == current_key {
+        // Return references from cached data, limited for performance
+        return cached
+          .iter()
+          .take(self.page_size_limit)
+          .map(|(idx, log)| (*idx, log))
+          .collect();
+      }
+    }
+    
+    // Cache miss - fall back to direct computation but limited
+    self.compute_filtered_logs_direct()
+      .into_iter()
+      .take(self.page_size_limit)
+      .collect()
+  }
+  
+  fn compute_filtered_logs_direct(&self) -> Vec<(usize, &ResolvedLog)> {
+    // Pre-compute lowercase search query once for performance
+    let search_query_lower = if !self.search_query.is_empty() {
+      Some(self.search_query.to_lowercase())
+    } else {
+      None
+    };
+    
     let mut filtered: Vec<(usize, &ResolvedLog)> = self
       .logs
       .iter()
       .enumerate()
-      .filter(|(_, ev)| self.matches_filters(ev))
+      .filter(|(_, log)| self.matches_filters_optimized(log, &search_query_lower))
       .collect();
-
+    
     self.sort_logs(&mut filtered);
     filtered
   }
+  
+  fn get_cache_key(&self) -> String {
+    format!(
+      "{}|{}|{}|{}",
+      self.level_filter.as_deref().unwrap_or(""),
+      self.search_query,
+      format!("{:?}", self.sort_by),
+      format!("{:?}", self.sort_order)
+    )
+  }
+  
 
-  fn matches_filters(&self, event: &ResolvedLog) -> bool {
-    // Level filter
+
+  fn matches_filters_optimized(&self, event: &ResolvedLog, search_query_lower: &Option<String>) -> bool {
+    // Level filter (most selective first for performance)
     if let Some(ref level_filter) = self.level_filter {
       let event_level = Utils::level_name(event.level);
       if event_level != level_filter.as_str() {
@@ -150,52 +347,71 @@ impl<'a> LogsWidget<'a> {
       }
     }
 
-    // Search filter
-    if !self.search_query.is_empty() {
-      let query = self.search_query.to_lowercase();
-
-      return event.timestamp.contains(&query)
-        || event.level.as_str().contains(&query)
-        || event.message.to_lowercase().contains(&query)
-        || event.target.to_lowercase().contains(&query)
-        || event.file.to_lowercase().contains(&query);
+    // Search filter (optimized - query already lowercased)
+    if let Some(ref query) = search_query_lower {
+      // Check most common fields first, avoid repeated to_lowercase() calls
+      if event.message.to_lowercase().contains(query) {
+        return true;
+      }
+      if event.level.as_str().to_lowercase().contains(query) {
+        return true;
+      }
+      if event.target.to_lowercase().contains(query) {
+        return true;
+      }
+      if event.timestamp.contains(query) { // timestamp usually doesn't need lowercasing
+        return true;
+      }
+      if event.file.to_lowercase().contains(query) {
+        return true;
+      }
+      
+      return false;
     }
 
     true
   }
+  
+  // Keep original method for backward compatibility
+  fn matches_filters(&self, event: &ResolvedLog) -> bool {
+    let search_query_lower = if !self.search_query.is_empty() {
+      Some(self.search_query.to_lowercase())
+    } else {
+      None
+    };
+    self.matches_filters_optimized(event, &search_query_lower)
+  }
 
+
+  
   fn sort_logs(&self, logs: &mut Vec<(usize, &ResolvedLog)>) {
     match self.sort_by {
       SortBy::Time => {
-        logs.sort_by(|a, b| {
-          let cmp = Self::ev_timestamp_millis(a.1).cmp(&Self::ev_timestamp_millis(b.1));
-          if self.sort_order == SortOrder::Descending {
-            cmp.reverse()
-          } else {
-            cmp
+        logs.sort_by(|(_, a), (_, b)| {
+          let a_time = Self::ev_timestamp_millis(a);
+          let b_time = Self::ev_timestamp_millis(b);
+          match self.sort_order {
+            SortOrder::Ascending => a_time.cmp(&b_time),
+            SortOrder::Descending => b_time.cmp(&a_time),
           }
         });
-      },
+      }
       SortBy::Level => {
-        logs.sort_by(|a, b| {
-          let cmp = (Self::ev_level(a.1) as u8).cmp(&(Self::ev_level(b.1) as u8));
-          if self.sort_order == SortOrder::Descending {
-            cmp.reverse()
-          } else {
-            cmp
+        logs.sort_by(|(_, a), (_, b)| {
+          let a_level = Self::ev_level(a) as u8;
+          let b_level = Self::ev_level(b) as u8;
+          match self.sort_order {
+            SortOrder::Ascending => a_level.cmp(&b_level),
+            SortOrder::Descending => b_level.cmp(&a_level),
           }
         });
-      },
+      }
       SortBy::Message => {
-        logs.sort_by(|a, b| {
-          let cmp = a.1.message.cmp(&b.1.message);
-          if self.sort_order == SortOrder::Descending {
-            cmp.reverse()
-          } else {
-            cmp
-          }
+        logs.sort_by(|(_, a), (_, b)| match self.sort_order {
+          SortOrder::Ascending => a.message.cmp(&b.message),
+          SortOrder::Descending => b.message.cmp(&a.message),
         });
-      },
+      }
     }
   }
 
@@ -237,38 +453,87 @@ impl<'a> LogsWidget<'a> {
   }
 
   // Navigation
-  fn move_cursor_up(&mut self) {
-    if self.selected_row > 0 {
-      self.selected_row -= 1;
+  pub fn move_cursor_up(&mut self) {
+    if self.logs.len() > 10000 {
+      // Virtual scrolling mode
+      if self.selected_row > 0 {
+        self.selected_row -= 1;
+      } else if self.virtual_scroll_offset > 0 {
+        self.scroll_up(1);
+        // Keep selection at top when scrolling up
+      }
+    } else {
+      // Normal mode
+      if self.selected_row > 0 {
+        self.selected_row -= 1;
+      }
     }
   }
 
-  fn move_cursor_down(&mut self) {
-    let filtered_count = self.filtered_and_sorted_logs().len();
-    if filtered_count > 0 && self.selected_row + 1 < filtered_count {
-      self.selected_row += 1;
+  pub fn move_cursor_down(&mut self) {
+    if self.logs.len() > 10000 {
+      // Virtual scrolling mode
+      let visible_logs = self.filtered_and_sorted_logs();
+      if self.selected_row < visible_logs.len().saturating_sub(1) {
+        self.selected_row += 1;
+      } else {
+        // Try to scroll down to show more logs
+        let total_count = self.get_total_filtered_count();
+        if self.virtual_scroll_offset + self.virtual_window_size < total_count {
+          self.scroll_down(1);
+          // Keep selection at bottom when scrolling down
+        }
+      }
+    } else {
+      // Normal mode
+      let filtered_count = self.filtered_and_sorted_logs().len();
+      if filtered_count > 0 && self.selected_row < filtered_count - 1 {
+        self.selected_row += 1;
+      }
+    }
+  }
+  
+  // Virtual scrolling methods for fast navigation
+  pub fn virtual_scroll_up(&mut self, lines: usize) {
+    if self.logs.len() > 10000 {
+      self.scroll_up(lines);
+    } else {
+      // Fallback to regular navigation for smaller datasets
+      for _ in 0..lines {
+        self.move_cursor_up();
+      }
+    }
+  }
+  
+  pub fn virtual_scroll_down(&mut self, lines: usize) {
+    if self.logs.len() > 10000 {
+      self.scroll_down(lines);
+    } else {
+      // Fallback to regular navigation for smaller datasets
+      for _ in 0..lines {
+        self.move_cursor_down();
+      }
     }
   }
 
-  fn page_up(&mut self) {
-    self.selected_row = self.selected_row.saturating_sub(10);
-  }
+  // Removed duplicate methods - using virtualized versions below
 
-  fn page_down(&mut self) {
-    let filtered_count = self.filtered_and_sorted_logs().len();
-    if filtered_count > 0 {
-      self.selected_row = (self.selected_row + 10).min(filtered_count - 1);
+  pub fn go_to_top(&mut self) {
+    if self.logs.len() > 10000 {
+      self.scroll_to_top();
+    } else {
+      self.selected_row = 0;
     }
   }
 
-  fn go_to_top(&mut self) {
-    self.selected_row = 0;
-  }
-
-  fn go_to_bottom(&mut self) {
-    let filtered_count = self.filtered_and_sorted_logs().len();
-    if filtered_count > 0 {
-      self.selected_row = filtered_count - 1;
+  pub fn go_to_bottom(&mut self) {
+    if self.logs.len() > 10000 {
+      self.scroll_to_bottom();
+    } else {
+      let filtered_count = self.filtered_and_sorted_logs().len();
+      if filtered_count > 0 {
+        self.selected_row = filtered_count - 1;
+      }
     }
   }
 
@@ -354,22 +619,24 @@ impl<'a> LogsWidget<'a> {
     }
   }
 
-  fn cycle_level_filter(&mut self) {
-    self.level_filter = match &self.level_filter {
+  pub fn cycle_level_filter(&mut self) {
+    let new_filter = match &self.level_filter {
       None => Some("ERROR".to_string()),
       Some(level) => match level.as_str() {
-        "FATAL" => Some("ERROR".to_string()),
         "ERROR" => Some("WARN".to_string()),
         "WARN" => Some("INFO".to_string()),
         "INFO" => Some("DEBUG".to_string()),
         "DEBUG" => Some("TRACE".to_string()),
         "TRACE" => Some("FATAL".to_string()),
+        "FATAL" => None,
         _ => None,
       },
     };
+    self.level_filter = new_filter;
+
   }
 
-  fn cycle_sort_column(&mut self) {
+  pub fn cycle_sort_column(&mut self) {
     self.sort_by = match self.sort_by {
       SortBy::Time => SortBy::Level,
       SortBy::Level => SortBy::Message,
@@ -377,18 +644,266 @@ impl<'a> LogsWidget<'a> {
     };
   }
 
-  fn toggle_sort_order(&mut self) {
+  pub fn toggle_sort_order(&mut self) {
     self.sort_order = match self.sort_order {
       SortOrder::Ascending => SortOrder::Descending,
       SortOrder::Descending => SortOrder::Ascending,
     };
+
   }
 
-  fn clear_all_filters(&mut self) {
-    self.search_query.clear();
+  pub fn clear_all_filters(&mut self) {
     self.level_filter = None;
-    self.sort_by = SortBy::Time;
-    self.sort_order = SortOrder::Descending;
+    self.search_query.clear();
+    
+    // Update cache for large datasets
+    if self.logs.len() > 1000 {
+      self.update_cache();
+    }
+  }
+  
+  pub fn clear_cache(&mut self) {
+    // Clear cache when filters change
+    self.cached_filtered_logs = None;
+    self.cache_key.clear();
+    self.processing_heavy_operation = false;
+    
+    // Reset virtual scroll when filters change
+    self.virtual_scroll_offset = 0;
+    self.selected_row = 0;
+  }
+  
+  // Update cache asynchronously for better performance
+  pub fn update_cache(&mut self) {
+    if self.logs.len() <= 1000 {
+      return; // No need to cache small datasets
+    }
+    
+    let current_key = self.get_cache_key();
+    if self.cache_key == current_key {
+      return; // Cache is already up to date
+    }
+    
+    // Set processing flag for heavy operations
+    self.processing_heavy_operation = true;
+    
+    // Pre-compute lowercase search query once
+    let search_query_lower = if !self.search_query.is_empty() {
+      Some(self.search_query.to_lowercase())
+    } else {
+      None
+    };
+    
+    // Filter and clone logs for caching
+    let mut filtered: Vec<(usize, ResolvedLog)> = self
+      .logs
+      .iter()
+      .enumerate()
+      .filter(|(_, log)| self.matches_filters_optimized(log, &search_query_lower))
+      .map(|(idx, log)| (idx, log.clone()))
+      .collect();
+    
+    // Sort the cached data
+    self.sort_cached_logs(&mut filtered);
+    
+    // Update cache
+    self.cached_filtered_logs = Some(filtered);
+    self.cache_key = current_key;
+    self.processing_heavy_operation = false;
+  }
+  
+  fn sort_cached_logs(&self, logs: &mut Vec<(usize, ResolvedLog)>) {
+    match self.sort_by {
+      SortBy::Time => {
+        logs.sort_by(|(_, a), (_, b)| {
+          let a_time = Self::ev_timestamp_millis(a);
+          let b_time = Self::ev_timestamp_millis(b);
+          match self.sort_order {
+            SortOrder::Ascending => a_time.cmp(&b_time),
+            SortOrder::Descending => b_time.cmp(&a_time),
+          }
+        });
+      }
+      SortBy::Level => {
+        logs.sort_by(|(_, a), (_, b)| {
+          let a_level = Self::ev_level(a) as u8;
+          let b_level = Self::ev_level(b) as u8;
+          match self.sort_order {
+            SortOrder::Ascending => a_level.cmp(&b_level),
+            SortOrder::Descending => b_level.cmp(&a_level),
+          }
+        });
+      }
+      SortBy::Message => {
+        logs.sort_by(|(_, a), (_, b)| match self.sort_order {
+          SortOrder::Ascending => a.message.cmp(&b.message),
+          SortOrder::Descending => b.message.cmp(&a.message),
+        });
+      }
+    }
+  }
+  
+  // Performance monitoring methods
+  pub fn get_total_filtered_count(&self) -> usize {
+    // Use fast count for virtualized rendering
+    if self.logs.len() > 10000 {
+      return self.get_total_filtered_count_fast();
+    }
+    
+    if let Some(ref cached) = self.cached_filtered_logs {
+      cached.len()
+    } else {
+      // Fallback - count without caching (slower but accurate)
+      self.logs.iter().filter(|log| self.matches_filters(log)).count()
+    }
+  }
+  
+  // Virtual scrolling controls
+  pub fn scroll_up(&mut self, lines: usize) {
+    if self.virtual_scroll_offset >= lines {
+      self.virtual_scroll_offset -= lines;
+    } else {
+      self.virtual_scroll_offset = 0;
+    }
+    self.update_selection_for_virtual_scroll();
+  }
+  
+  pub fn scroll_down(&mut self, lines: usize) {
+    let total_count = self.get_total_filtered_count();
+    let max_offset = if total_count > self.virtual_window_size {
+      total_count - self.virtual_window_size
+    } else {
+      0
+    };
+    
+    self.virtual_scroll_offset = (self.virtual_scroll_offset + lines).min(max_offset);
+    self.update_selection_for_virtual_scroll();
+  }
+  
+  pub fn page_up(&mut self) {
+    if self.logs.len() > 10000 {
+      self.scroll_up(self.virtual_window_size);
+    } else {
+      // Traditional page navigation for smaller datasets
+      self.selected_row = self.selected_row.saturating_sub(10);
+    }
+  }
+  
+  pub fn page_down(&mut self) {
+    if self.logs.len() > 10000 {
+      self.scroll_down(self.virtual_window_size);
+    } else {
+      // Traditional page navigation for smaller datasets
+      let filtered_count = self.filtered_and_sorted_logs().len();
+      if filtered_count > 0 {
+        self.selected_row = (self.selected_row + 10).min(filtered_count - 1);
+      }
+    }
+  }
+  
+  pub fn scroll_to_top(&mut self) {
+    self.virtual_scroll_offset = 0;
+    self.selected_row = 0;
+  }
+  
+  pub fn scroll_to_bottom(&mut self) {
+    let total_count = self.get_total_filtered_count();
+    if total_count > self.virtual_window_size {
+      self.virtual_scroll_offset = total_count - self.virtual_window_size;
+    } else {
+      self.virtual_scroll_offset = 0;
+    }
+    self.selected_row = self.virtual_window_size.saturating_sub(1);
+  }
+  
+  fn update_selection_for_virtual_scroll(&mut self) {
+    // Keep selection within visible window
+    if self.selected_row >= self.virtual_window_size {
+      self.selected_row = self.virtual_window_size.saturating_sub(1);
+    }
+  }
+  
+  // Get virtual scroll info for UI display
+  pub fn get_virtual_scroll_info(&self) -> (usize, usize, usize) {
+    let total_count = self.get_total_filtered_count();
+    let visible_start = self.virtual_scroll_offset + 1; // 1-indexed for display
+    let visible_end = (self.virtual_scroll_offset + self.virtual_window_size).min(total_count);
+    (visible_start, visible_end, total_count)
+  }
+  
+  pub fn set_page_size_limit(&mut self, limit: usize) {
+    self.page_size_limit = limit.max(10); // Ensure at least 10
+    self.clear_cache(); // Clear cache when limit changes
+  }
+  
+  pub fn set_search_query(&mut self, query: String) {
+    if self.search_query != query {
+      self.search_query = query;
+      
+      // Update cache for large datasets
+      if self.logs.len() > 1000 {
+        self.update_cache();
+      }
+    }
+  }
+  
+  pub fn is_processing(&self) -> bool {
+    self.processing_heavy_operation || self.is_loading
+  }
+  
+  pub fn get_status_text(&mut self) -> String {
+    if self.is_loading {
+      "Loading logs...".to_string()
+    } else if self.processing_heavy_operation {
+      "Processing...".to_string()
+    } else if self.full_data_loading {
+      "Loading full dataset in background...".to_string()
+    } else if !self.has_data {
+      "No data available".to_string()
+    } else if let Some(ref error) = self.error_message {
+      format!("Error: {}", error)
+    } else {
+      let filtered_count = self.get_filtered_count();
+      let total_count = self.logs.len();
+      let status = if filtered_count != total_count {
+        format!("{} of {} logs", filtered_count, total_count)
+      } else {
+        format!("{} logs", total_count)
+      };
+      
+      if self.is_sample_data {
+        format!("{} (sample - press 'L' to load all)", status)
+      } else {
+        status
+      }
+    }
+  }
+  
+  // Request loading of full dataset
+  pub fn request_full_data_load(&mut self) {
+    if self.is_sample_data && !self.full_data_loading {
+      self.load_more_requested = true;
+      self.full_data_loading = true;
+      eprintln!("[LOAD] User requested full dataset load");
+    }
+  }
+  
+  // Check if full data load was requested
+  pub fn should_load_full_data(&self) -> bool {
+    self.load_more_requested && !self.is_loading
+  }
+  
+  // Signal that full data should be loaded (simpler approach)
+  pub fn mark_full_data_needed(&mut self) {
+    self.is_sample_data = false;
+    self.full_data_loading = false;
+    self.load_more_requested = false;
+    self.clear_cache(); // Clear cache to refresh with new data
+    eprintln!("[LOAD] Marked for full data reload");
+  }
+  
+  pub fn get_filtered_count(&self) -> usize {
+    self.filtered_and_sorted_logs().len()
   }
 
   // Rendering helpers

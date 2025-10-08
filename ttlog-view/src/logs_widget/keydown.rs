@@ -45,13 +45,19 @@ impl<'a> LogsWidget<'a> {
 
   pub fn handle_normal_keys(&mut self, key: crossterm::event::KeyEvent) {
     match key.code {
-      // Navigation
+      // Navigation - enhanced for virtual scrolling
       KeyCode::Up | KeyCode::Char('k') => self.move_cursor_up(),
       KeyCode::Down | KeyCode::Char('j') => self.move_cursor_down(),
       KeyCode::PageUp => self.page_up(),
       KeyCode::PageDown => self.page_down(),
       KeyCode::Home => self.go_to_top(),
       KeyCode::End => self.go_to_bottom(),
+      
+      // Virtual scrolling controls for large datasets
+      KeyCode::Char('J') => self.virtual_scroll_down(5), // Fast scroll down
+      KeyCode::Char('K') => self.virtual_scroll_up(5),   // Fast scroll up
+      KeyCode::Char('G') => self.go_to_bottom(),         // Go to end
+      KeyCode::Char('g') => self.go_to_top(),            // Go to beginning
 
       // View log detail
       KeyCode::Enter => {
@@ -78,6 +84,12 @@ impl<'a> LogsWidget<'a> {
 
       // Filtering and sorting
       KeyCode::Char('l') => self.cycle_level_filter(),
+      KeyCode::Char('L') => {
+        // Load full dataset if currently showing sample data
+        if self.is_sample_data {
+          self.request_full_data_load();
+        }
+      },
       KeyCode::Char('s') => self.cycle_sort_column(),
       KeyCode::Char('r') => self.toggle_sort_order(),
       KeyCode::Char('c') => self.clear_all_filters(),
@@ -96,6 +108,14 @@ impl<'a> LogsWidget<'a> {
       // Help
       KeyCode::Char('?') => {
         self.view_state = ViewState::Help;
+      },
+      
+      // Load more data
+      KeyCode::Char('m') => {
+        // Alternative key for loading more data
+        if self.is_sample_data {
+          self.request_full_data_load();
+        }
       },
 
       _ => {},

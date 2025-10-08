@@ -1,9 +1,11 @@
-use crossterm::event::{KeyEvent, MouseEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use ratatui::{
   layout::{Constraint, Direction, Layout, Rect},
   style::{Color, Modifier, Style},
   text::{Line, Span},
-  widgets::{Block, BorderType, Borders, Paragraph},
+  widgets::{
+    Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+  },
   Frame,
 };
 
@@ -15,6 +17,8 @@ pub struct SystemInfoWidget<'a> {
   pub area: Option<Rect>,
   pub focused: bool,
   pub logs_info: &'a LogsInfo,
+  pub scroll_offset: u16,
+  pub max_scroll: u16,
 }
 
 impl<'a> SystemInfoWidget<'a> {
@@ -25,6 +29,8 @@ impl<'a> SystemInfoWidget<'a> {
       area: None,
       focused: false,
       logs_info,
+      scroll_offset: 0,
+      max_scroll: 0,
     }
   }
 
@@ -122,6 +128,20 @@ impl<'a> SystemInfoWidget<'a> {
         Style::default().fg(Color::Magenta),
       ),
     ]));
+    col3.push(Line::from(vec![
+      Span::styled("Lines:    ", Style::default().fg(Color::Green)),
+      Span::styled(
+        format!("{}", self.logs_info.log_files.total_lines),
+        Style::default().fg(Color::Cyan),
+      ),
+    ]));
+    col3.push(Line::from(vec![
+      Span::styled("Events:   ", Style::default().fg(Color::Green)),
+      Span::styled(
+        format!("{}", self.logs_info.log_files.total_events),
+        Style::default().fg(Color::Yellow),
+      ),
+    ]));
 
     // List log files if any (in column 3)
     if !self.logs_info.log_files.files.is_empty() {
@@ -134,11 +154,28 @@ impl<'a> SystemInfoWidget<'a> {
         col3.push(Line::from(vec![
           Span::styled("  ", Style::default()),
           Span::styled(&file.size_formatted, Style::default().fg(Color::Cyan)),
+          Span::styled(" | ", Style::default().fg(Color::DarkGray)),
+          Span::styled(
+            format!("{} lines", file.line_count.unwrap_or(0)),
+            Style::default().fg(Color::Blue),
+          ),
         ]));
       }
     }
 
     (col1, col2, col3)
+  }
+
+  fn scroll_up(&mut self) {
+    if self.scroll_offset > 0 {
+      self.scroll_offset -= 1;
+    }
+  }
+
+  fn scroll_down(&mut self) {
+    if self.scroll_offset < self.max_scroll {
+      self.scroll_offset += 1;
+    }
   }
 }
 
@@ -172,15 +209,46 @@ impl<'a> Widget for SystemInfoWidget<'a> {
     // Get the column content
     let (col1_lines, col2_lines, col3_lines) = self.create_column_sections();
 
-    // Render each column
-    let col1_paragraph = Paragraph::new(col1_lines).style(Style::default().fg(Color::White));
+    // Calculate max scroll based on the tallest column
+    let max_lines = col1_lines.len().max(col2_lines.len()).max(col3_lines.len());
+    let visible_height = inner_area.height as usize;
+
+    if max_lines > visible_height {
+      self.max_scroll = (max_lines - visible_height) as u16;
+    } else {
+      self.max_scroll = 0;
+      self.scroll_offset = 0;
+    }
+
+    // Render each column with scroll support
+    let scroll = self.scroll_offset as usize;
+
+    let col1_paragraph = Paragraph::new(col1_lines)
+      .style(Style::default().fg(Color::White))
+      .scroll((scroll as u16, 0));
     f.render_widget(col1_paragraph, columns[0]);
 
-    let col2_paragraph = Paragraph::new(col2_lines).style(Style::default().fg(Color::White));
+    let col2_paragraph = Paragraph::new(col2_lines)
+      .style(Style::default().fg(Color::White))
+      .scroll((scroll as u16, 0));
     f.render_widget(col2_paragraph, columns[1]);
 
-    let col3_paragraph = Paragraph::new(col3_lines).style(Style::default().fg(Color::White));
+    let col3_paragraph = Paragraph::new(col3_lines)
+      .style(Style::default().fg(Color::White))
+      .scroll((scroll as u16, 0));
     f.render_widget(col3_paragraph, columns[2]);
+
+    // Render scrollbar if content overflows
+    if self.max_scroll > 0 {
+      let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("↑"))
+        .end_symbol(Some("↓"));
+
+      let mut scrollbar_state =
+        ScrollbarState::new(self.max_scroll as usize).position(self.scroll_offset as usize);
+
+      f.render_stateful_widget(scrollbar, inner_area, &mut scrollbar_state);
+    }
   }
 
   fn on_key(&mut self, key: KeyEvent) {
@@ -188,6 +256,22 @@ impl<'a> Widget for SystemInfoWidget<'a> {
       return;
     }
     match key.code {
+      KeyCode::Up | KeyCode::Char('k') => self.scroll_up(),
+      KeyCode::Down | KeyCode::Char('j') => self.scroll_down(),
+      KeyCode::PageUp => {
+        // Scroll up by 5 lines
+        for _ in 0..5 {
+          self.scroll_up();
+        }
+      },
+      KeyCode::PageDown => {
+        // Scroll down by 5 lines
+        for _ in 0..5 {
+          self.scroll_down();
+        }
+      },
+      KeyCode::Home => self.scroll_offset = 0,
+      KeyCode::End => self.scroll_offset = self.max_scroll,
       _ => {},
     }
   }
