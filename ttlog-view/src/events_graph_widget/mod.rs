@@ -79,12 +79,13 @@ impl Widget for EventsGraphWidget {
       Span::raw(format!("{:.0}s", x_max)),
     ];
 
-    // Y axis bounds and labels (scale to current max)
+    // Y axis bounds and labels (dynamic to current load; ensure a sensible minimum)
     let y_max = self
       .snapshots
       .iter()
       .map(|(_, v)| *v)
-      .fold(1000000.0, f64::max) // at least 50
+      .fold(0.0, f64::max)
+      .max(50.0) // minimum visible scale
       .ceil();
 
     // Clamp all data points to y_max

@@ -40,8 +40,7 @@ impl Utils {
 
   pub fn format_timestamp_from_string(ts_str: &str) -> String {
     let parsed = NaiveDateTime::parse_from_str(ts_str, "%Y%m%d%H%M%S")
-      .map(|dt| dt)
-      .unwrap_or_else(|_| NaiveDateTime::UNIX_EPOCH);
+      .unwrap_or_else(|_| chrono::DateTime::UNIX_EPOCH.naive_utc());
 
     format!(
       "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",

@@ -1,6 +1,5 @@
 use std::{
-  ops::Deref,
-  sync::{self, Arc},
+  sync::Arc,
   thread,
   time::Duration,
 };
@@ -16,8 +15,11 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   trace.add_listener(Arc::new(ttlog::stdout_listener::StdoutListener::new()));
   trace.set_level(ttlog::event::LogLevel::TRACE);
 
-  // Simulate application startup
-  info!("Application starting...");
+  let _start_time = std::time::Instant::now();
+  let _duration = Duration::from_secs(4 * 60); // 4 minutes
+  let _iteration = 0;
+
+  info!("Application starting - will run for 4 minutes...");
   trace!("Loading configuration files");
   debug!(config_path = "./config/app.toml", "Configuration loaded");
 
@@ -55,20 +57,20 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
     ("eve", 1005, "192.168.1.104"),
   ];
 
-  for (username, user_id, ip) in &users {
+  for (username, user_id, ip) in users {
     info!(
-      user_id = *user_id,
-      username = *username,
-      ip_address = *ip,
+      user_id = user_id,
+      username = username,
+      ip_address = ip,
       "User authentication attempt"
     );
-    debug!(user_id = *user_id, "Validating credentials");
-    trace!(user_id = *user_id, "Checking password hash");
-    trace!(user_id = *user_id, "Verifying session token");
+    debug!(user_id = user_id, "Validating credentials");
+    trace!(user_id = user_id, "Checking password hash");
+    trace!(user_id = user_id, "Verifying session token");
     let session_id = format!("sess_{}", user_id);
     info!(
-      user_id = *user_id,
-      username = *username,
+      user_id = user_id,
+      username = username,
       session_id = session_id,
       "User logged in successfully"
     );
@@ -87,17 +89,16 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   ];
 
   for cycle in 0..50 {
-    for (endpoint, method, status, duration_ms) in &endpoints {
+    for (endpoint, method, status, duration_ms) in endpoints.iter() {
       let request_id = format!("req_{}", cycle * 100 + duration_ms);
+      
       trace!(
-        request_id = request_id,
         method = *method,
         path = *endpoint,
         "Incoming HTTP request"
       );
 
       debug!(
-        request_id = request_id,
         endpoint = *endpoint,
         method = *method,
         "Processing request"
@@ -105,30 +106,26 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
 
       // Simulate database queries
       if endpoint.contains("users") || endpoint.contains("posts") {
-        let db_duration = *duration_ms / 2;
+        let query_duration = *duration_ms / 2;
         trace!(
-          request_id = request_id,
           query = "SELECT * FROM users WHERE id = $1",
-          duration_ms = db_duration,
+          duration_ms = query_duration,
           "Database query executed"
         );
       }
 
       // Simulate cache operations
       if cycle % 3 == 0 {
-        let cache_key = format!("cache:{}:{}", endpoint, cycle);
         debug!(
-          request_id = request_id,
-          key = cache_key,
           "Cache miss, fetching from database"
         );
       } else {
-        let cache_key = format!("cache:{}:{}", endpoint, cycle);
-        trace!(request_id = request_id, key = cache_key, "Cache hit");
+        trace!(
+          "Cache hit"
+        );
       }
 
       info!(
-        request_id = request_id,
         method = *method,
         path = *endpoint,
         status_code = *status,

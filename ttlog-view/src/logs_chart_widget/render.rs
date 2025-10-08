@@ -28,28 +28,36 @@ impl<'a> Widget for LogsChartWidget<'a> {
           TimeRange::Last7Days => TimeRange::All,
           TimeRange::All => TimeRange::Last5Min,
         };
+        self.clear_cache(); // Clear cache when time range changes
       },
       KeyCode::Char('v') => {
         // toggle total bar
         self.show_total = !self.show_total;
+        self.clear_cache(); // Clear cache when display options change
       },
       KeyCode::Char('f') => {
         self.show_fatal = !self.show_fatal;
+        self.clear_cache(); // Clear cache when display options change
       },
       KeyCode::Char('e') => {
         self.show_errors = !self.show_errors;
+        self.clear_cache(); // Clear cache when display options change
       },
       KeyCode::Char('w') => {
         self.show_warnings = !self.show_warnings;
+        self.clear_cache(); // Clear cache when display options change
       },
       KeyCode::Char('i') => {
         self.show_info = !self.show_info;
+        self.clear_cache(); // Clear cache when display options change
       },
       KeyCode::Char('d') => {
         self.show_debug = !self.show_debug;
+        self.clear_cache(); // Clear cache when display options change
       },
       KeyCode::Char('r') => {
         self.show_trace = !self.show_trace;
+        self.clear_cache(); // Clear cache when display options change
       },
       _ => {},
     }

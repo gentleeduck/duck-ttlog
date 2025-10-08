@@ -1,11 +1,11 @@
 use chrono::{DateTime, TimeZone, Utc};
 use std::io::{self, Write};
-use std::sync::Arc;
+
 
 use crate::event::LogEvent;
 use crate::listener::LogListener;
 use crate::string_interner::StringInterner;
-use crate::trace::Trace;
+
 
 /// Fast stdout listener with minimal allocations
 pub struct StdoutListener {

@@ -121,6 +121,14 @@ impl<'a> LogsChartWidget<'a> {
     self.last_calculation_time = None;
   }
   
+  /// Method to update logs after new data comes in
+  pub fn update_logs(&mut self, new_logs: &'a Vec<ResolvedLog>) {
+    self.logs = new_logs;
+    self.has_data = !new_logs.is_empty();
+    self.is_loading = false;
+    self.clear_cache(); // Clear cache when logs change
+  }
+  
   pub fn is_processing(&self) -> bool {
     self.processing_heavy_operation || self.is_loading
   }
