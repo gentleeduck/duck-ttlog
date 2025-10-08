@@ -40,18 +40,30 @@ struct AppState {
 }
 
 fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
-  let logs_vec = Logs::get_logs("tmp/ttlog.log");
-  let snapshots = Snapshots::read_snapshots("./tmp").unwrap_or_default();
+  let snapshots = match Snapshots::read_snapshots("./tmp") {
+    Ok(snapshots) => snapshots,
+    Err(e) => {
+      eprintln!("Error reading snapshots: {}", e);
+      return Ok(());
+    },
+  };
+
+  let (logs_info, log_events) = match Logs::get_complete_logs_data("./tmp", "./tmp/ttlog.log") {
+    Ok(data) => data,
+    Err(e) => {
+      eprintln!("Error reading logs: {}", e);
+      return Ok(());
+    },
+  };
 
   let mut app_state = AppState { focused_widget: 0 };
   let mut main = MainWidget::new();
   let mut list = ListWidget::new();
-  let mut logs = LogsWidget::new(&logs_vec);
-  let mut logs_chart = LogsChartWidget::new(&logs_vec);
+  let mut logs = LogsWidget::new(&log_events);
+  let mut logs_chart = LogsChartWidget::new(&log_events);
   let mut snapshots = SnapshotWidget::new(&snapshots);
-  // let mut snapshots_events = LogsWidget::new(&logs_vec);
   let mut events_graph = EventsGraphWidget::new();
-  let mut system_info = SystemInfoWidget::new();
+  let mut system_info = SystemInfoWidget::new(&logs_info);
 
   list.focused = app_state.focused_widget == list.id;
   logs.focused = app_state.focused_widget == logs.id;
@@ -72,7 +84,6 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
         &mut snapshots,
         &mut events_graph,
         &mut system_info,
-        // &mut snapshots_events,
       )
     })?;
 
@@ -106,7 +117,6 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
           logs.on_key(k);
           logs_chart.on_key(k);
           snapshots.on_key(k);
-          // snapshots_events.on_key(k);
           events_graph.on_key(k);
           system_info.on_key(k);
         },
@@ -115,7 +125,6 @@ fn app_run(mut terminal: ratatui::DefaultTerminal) -> color_eyre::Result<()> {
           logs.on_mouse(m);
           logs_chart.on_mouse(m);
           snapshots.on_mouse(m);
-          // snapshots_events.on_mouse(m);
           events_graph.on_mouse(m);
           system_info.on_mouse(m);
         },
@@ -140,7 +149,6 @@ pub fn reader_ui(
   snapshots: &mut SnapshotWidget,
   events_graph: &mut EventsGraphWidget,
   system_info: &mut SystemInfoWidget,
-  // snapshots_events: &mut LogsWidget,
 ) {
   let area = f.area();
 

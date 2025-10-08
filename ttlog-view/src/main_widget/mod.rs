@@ -17,8 +17,6 @@ impl MainWidget {
   }
 
   pub fn render(&mut self, f: &mut Frame<'_>, b: &Block<'_>, area: Rect) {
-    // Main block with rounded border
-
     f.render_widget(b, area);
 
     // Render stats inline on the top border
@@ -44,7 +42,7 @@ impl MainWidget {
     let paragraph = Paragraph::new(stats_text)
       .style(Style::default().bg(Color::Black))
       .alignment(Alignment::Right); // optional bg to match terminal
-                                    //
+
     let title = Paragraph::new("~ TTLog Dashboard ~").style(Style::default().bg(Color::Black));
 
     f.render_widget(title, inline_area);
