@@ -39,10 +39,7 @@ impl<T> LockFreeRingBuffer<T> {
   }
 
   pub fn push_overwrite(&self, item: T) {
-    match self.push(item) {
-      Ok(_) => {},  // Success, eviction info discarded
-      Err(_) => {}, // This shouldn't happen with ArrayQueue, but handle gracefully
-    }
+    let _ = self.push(item);
   }
 
   pub fn pop(&self) -> Option<T> {

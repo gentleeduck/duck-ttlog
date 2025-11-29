@@ -1,6 +1,5 @@
 // mod __test__;
 
-
 use crossbeam_channel::Sender;
 use signal_hook::{
   consts::{
@@ -16,7 +15,7 @@ pub struct SignalHook {}
 
 impl SignalHook {
   pub fn install(sender: Sender<Message>) {
-    let mut signals = match Signals::new(&[
+    let mut signals = match Signals::new([
       SIGINT, SIGTERM, SIGQUIT, SIGHUP, SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGPIPE, SIGCHLD,
     ]) {
       Ok(s) => s,

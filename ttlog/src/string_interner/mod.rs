@@ -366,7 +366,6 @@ impl StringInterner {
   /// - Input comes from valid string slices
   /// - `read_unaligned` handles arbitrary alignment
   /// - Chunk size is validated by `chunks_exact(8)`
-
   #[inline]
   fn fast_hash_smallvec(&self, s: &smallvec::SmallVec<[u8; 128]>) -> u64 {
     let mut hash = 0xcbf29ce484222325u64; // FNV offset basis

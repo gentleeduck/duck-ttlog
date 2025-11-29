@@ -172,7 +172,6 @@ impl SnapshotWriter {
     interner: Arc<StringInterner>,
   ) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(snapshot) = self.create_snapshot(ring, reason, interner) {
-      println!("[Snapshot] Snapshot written to {:#?}", snapshot);
       self.write_snapshot(&snapshot)
     } else {
       println!("[Snapshot] No events to snapshot");

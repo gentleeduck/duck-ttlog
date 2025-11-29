@@ -96,6 +96,12 @@ pub struct LogEvent {
   pub position: (u32, u32),
 }
 
+impl Default for LogEvent {
+  fn default() -> Self {
+    Self::new()
+  }
+}
+
 impl LogEvent {
   #[inline]
   pub fn timestamps(&self) -> u64 {

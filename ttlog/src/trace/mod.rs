@@ -22,7 +22,10 @@ pub enum Message {
 }
 
 pub enum ListenerMessage {
-  Add(Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>),
+  Add(
+    Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>,
+    std::sync::mpsc::Sender<()>,
+  ),
   Shutdown,
 }
 
@@ -168,13 +171,20 @@ impl Trace {
     &self,
     listener: Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>,
   ) {
-    if let Err(e) = self
+    let (ack_tx, ack_rx) = std::sync::mpsc::channel();
+    match self
       .listener_sender
-      .try_send(ListenerMessage::Add(listener))
+      .send(ListenerMessage::Add(listener, ack_tx))
     {
-      eprintln!("[Trace] Failed to add listener: {:?}", e);
-    } else {
-      println!("[Trace] Listener addition request sent");
+      Ok(_) => {
+        println!("[Trace] Listener addition request sent");
+        if ack_rx.recv().is_err() {
+          eprintln!("[Trace] Listener addition ack channel dropped");
+        }
+      },
+      Err(e) => {
+        eprintln!("[Trace] Failed to add listener: {:?}", e);
+      },
     }
   }
 
@@ -248,7 +258,7 @@ impl Trace {
     let event = LogEvent {
       packed_meta: LogEvent::pack_meta(
         timestamp,
-        unsafe { std::mem::transmute(log_level) },
+        unsafe { std::mem::transmute::<u8, LogLevel>(log_level) },
         thread_id,
       ),
       target_id,
@@ -263,9 +273,10 @@ impl Trace {
 
     // Broadcast to all listeners immediately - no buffering, no limits
     // Using unbounded channel ensures no events are lost
-    if let Err(_) = self
+    if self
       .event_broadcast_sender
       .try_send(EventBroadcast { event })
+      .is_err()
     {
       // If the channel is somehow full or closed, we could optionally log this
       // but we don't want to block the critical logging path
@@ -353,16 +364,17 @@ impl Trace {
       Arc<dyn LogListener + std::panic::UnwindSafe + std::panic::RefUnwindSafe>,
     > = Vec::new();
 
-    eprintln!("[Trace] Listener thread started");
+    println!("[Trace] Listener thread started");
 
     loop {
       crossbeam_channel::select! {
         recv(listener_receiver) -> msg => {
           match msg {
-            Ok(ListenerMessage::Add(listener)) => {
+            Ok(ListenerMessage::Add(listener, ack)) => {
               listener.on_start();
               listeners.push(listener);
               eprintln!("[Trace] Added new listener, total: {}", listeners.len());
+              let _ = ack.send(());
             },
             Ok(ListenerMessage::Shutdown) => {
               eprintln!("[Trace] Listener thread received shutdown signal");

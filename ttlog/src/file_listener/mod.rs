@@ -24,7 +24,6 @@ impl FileListener {
 
     let file = OpenOptions::new()
       .create(true)
-      .write(true)
       .append(true)
       .open(path_obj)?;
 

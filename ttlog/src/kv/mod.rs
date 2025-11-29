@@ -43,7 +43,7 @@ pub struct KvEncoder;
 
 impl KvEncoder {
   /// Encode any serializable value into a KvTransformer
-  pub fn encode<'a, T>(value: &'a T) -> Result<KvTransformer, serde_json::Error>
+  pub fn encode<T>(value: &T) -> Result<KvTransformer, serde_json::Error>
   where
     T: Serialize + 'static,
   {
@@ -53,7 +53,7 @@ impl KvEncoder {
   }
 
   /// Encode to pretty JSON
-  pub fn encode_pretty<'a, T>(value: &'a T) -> Result<KvTransformer, serde_json::Error>
+  pub fn encode_pretty<T>(value: &T) -> Result<KvTransformer, serde_json::Error>
   where
     T: Serialize + 'static,
   {
