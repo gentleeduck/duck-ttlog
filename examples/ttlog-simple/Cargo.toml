@@ -18,8 +18,6 @@ serde.workspace = true
 serde_json.workspace = true
 smallvec.workspace = true
 syn.workspace = true
-# Tracing ecosystem
-tracing = { workspace = true }
 
 # Internal dependencies
 ttlog = { path = "../../ttlog" }

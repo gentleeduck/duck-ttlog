@@ -12,19 +12,26 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   trace.add_listener(Arc::new(StdoutListener::new()));
   trace.set_level(ttlog::event::LogLevel::TRACE);
 
-  trace!("Application started successfullyy");
-  debug!("Application started successfullyy");
-  info!("Application started successfullyyy");
-  warn!("Application started successfullyyyy");
-  error!("An error occurred in the DB it might be shutting down");
-  fatal!("An error occurred in the DB it might be shutting down");
+  let handle = std::thread::spawn(|| loop {
+    debug!("Waiting for compaction");
+    std::thread::sleep(std::time::Duration::from_secs(1));
+  });
+  handle.join().unwrap();
+
+  // trace!("Application started successfullyy");
+  // debug!("Application started successfullyy");
+  // info!("Application started successfullyyy");
+  // warn!("Application started successfullyyyy");
+  // error!("An error occurred in the DB it might be shutting down");
+  // fatal!("An error occurred in the DB it might be shutting down");
 
   let user_id = 42;
   let username = "alice";
-  info!(user_id = user_id, username = username, "User logged in");
+  let x = &username;
+  info!(user_id = user_id, username = *x, "User logged in");
 
   // panic!("SIGINT received, shutting down!!");
-  std::thread::sleep(std::time::Duration::from_secs(1));
+  std::thread::sleep(std::time::Duration::from_secs(10));
   trace.shutdown();
 
   Ok(())

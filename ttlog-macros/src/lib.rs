@@ -49,8 +49,8 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
   let common_constants = quote! {
     const LEVEL: u8 = #level;
-    const MODULE: &'static str = module_path!();
-    const FILE: &'static str = file!();
+    const MODULE: &str = module_path!();
+    const FILE: &str = file!();
     const POSITION: (u32, u32) = (line!(), column!());
   };
 
@@ -65,30 +65,28 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
     (Some(message), true) => quote! {
       {
         #common_constants
-        const MESSAGE: &'static str = #message;
+        const MESSAGE: &str = #message;
 
         #common_statics
         static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
-        ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-          if let Some(logger) = logger_cell.get() {
-            if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-              let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
-              let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
-              let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
+        if let Some(logger) = ttlog::trace::GLOBAL_LOGGER.get() {
+          if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+            let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+            let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
+            let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
-              logger.send_event_fast(
-                LEVEL,
-                target_id,
-                std::num::NonZeroU16::new(message_id),
-                #thread_id_expr,
-                file_id,
-                POSITION,
-                None,
-              );
-            }
+            logger.send_event_fast(
+              LEVEL,
+              target_id,
+              std::num::NonZeroU16::new(message_id),
+              #thread_id_expr,
+              file_id,
+              POSITION,
+              None,
+            );
           }
-        });
+        }
       }
     },
 
@@ -101,45 +99,43 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
       quote! {
         {
           #common_constants
-          const MESSAGE: &'static str = #message;
+          const MESSAGE: &str = #message;
           const NUM_VALUES: usize = #num_kvs;
 
           #common_statics
           static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
           static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
-          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-            if let Some(logger) = logger_cell.get() {
-              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-                let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
-                {
-                  use serde::ser::{SerializeMap, Serializer};
-                  let mut ser = serde_json::Serializer::new(&mut buf);
-                  let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
-                  #({
-                    let wrapper = ttlog::kv::IntOrSer(&#kv_values);
-                    map.serialize_entry(stringify!(#kv_keys), &wrapper).unwrap();
-                  })*
-                  map.end().unwrap();
-                }
-
-                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
-                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
-                let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
-                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.into_inner()));
-
-                logger.send_event_fast(
-                  LEVEL,
-                  target_id,
-                  std::num::NonZeroU16::new(message_id),
-                  #thread_id_expr,
-                  file_id,
-                  POSITION,
-                  std::num::NonZeroU16::new(kv_id),
-                );
+          if let Some(logger) = ttlog::trace::GLOBAL_LOGGER.get() {
+            if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+              let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
+              {
+                use serde::ser::{SerializeMap, Serializer};
+                let mut ser = serde_json::Serializer::new(&mut buf);
+                let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
+                #({
+                  let wrapper = ttlog::kv::IntOrSer(&#kv_values);
+                  map.serialize_entry(stringify!(#kv_keys), &wrapper).unwrap();
+                })*
+                map.end().unwrap();
               }
+
+              let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+              let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
+              let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
+              let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.into_inner()));
+
+              logger.send_event_fast(
+                LEVEL,
+                target_id,
+                std::num::NonZeroU16::new(message_id),
+                #thread_id_expr,
+                file_id,
+                POSITION,
+                std::num::NonZeroU16::new(kv_id),
+              );
             }
-          });
+          }
         }
       }
     },
@@ -158,50 +154,21 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           #common_statics
           static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
-          ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-            if let Some(logger) = logger_cell.get() {
-              if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
-                let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
-                {
-                  use serde::ser::{SerializeMap, Serializer};
-                  let mut ser = serde_json::Serializer::new(&mut buf);
-                  let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
-                  #({
-                    let wrapper = ttlog::kv::IntOrSer(&#kv_values);
-                    map.serialize_entry(stringify!(#kv_keys), &wrapper).unwrap();
-                  })*
-                  map.end().unwrap();
-                }
-
-                let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.into_inner()));
-                let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
-                let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
-
-                logger.send_event_fast(
-                  LEVEL,
-                  target_id,
-                  None,
-                  #thread_id_expr,
-                  file_id,
-                  POSITION,
-                  std::num::NonZeroU16::new(kv_id),
-                );
-              }
-            }
-          });
-        }
-      }
-    },
-
-    // Case 4: Empty call
-    (None, true) => quote! {
-      {
-        #common_constants
-        #common_statics
-
-        ttlog::trace::GLOBAL_LOGGER.with(|logger_cell| {
-          if let Some(logger) = logger_cell.get() {
+          if let Some(logger) = ttlog::trace::GLOBAL_LOGGER.get() {
             if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+              let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
+              {
+                use serde::ser::{SerializeMap, Serializer};
+                let mut ser = serde_json::Serializer::new(&mut buf);
+                let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
+                #({
+                  let wrapper = ttlog::kv::IntOrSer(&#kv_values);
+                  map.serialize_entry(stringify!(#kv_keys), &wrapper).unwrap();
+                })*
+                map.end().unwrap();
+              }
+
+              let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.into_inner()));
               let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
               let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 
@@ -212,11 +179,36 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 #thread_id_expr,
                 file_id,
                 POSITION,
-                None,
+                std::num::NonZeroU16::new(kv_id),
               );
             }
           }
-        });
+        }
+      }
+    },
+
+    // Case 4: Empty call
+    (None, true) => quote! {
+      {
+        #common_constants
+        #common_statics
+
+        if let Some(logger) = ttlog::trace::GLOBAL_LOGGER.get() {
+          if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
+            let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
+            let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
+
+            logger.send_event_fast(
+              LEVEL,
+              target_id,
+              None,
+              #thread_id_expr,
+              file_id,
+              POSITION,
+              None,
+            );
+          }
+        }
       }
     },
   }

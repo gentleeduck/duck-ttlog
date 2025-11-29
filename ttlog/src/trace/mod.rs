@@ -59,9 +59,7 @@ pub struct Trace {
   pub listener_thread: Option<thread::JoinHandle<()>>,
 }
 
-thread_local! {
-  pub static GLOBAL_LOGGER: OnceLock<Trace> = OnceLock::new();
-}
+pub static GLOBAL_LOGGER: OnceLock<Trace> = OnceLock::new();
 
 impl Trace {
   pub fn new(
@@ -130,12 +128,12 @@ impl Trace {
     );
 
     // Set the global logger BEFORE spawning the writer thread
-    GLOBAL_LOGGER.with(|logger_cell| match logger_cell.set(trace.clone()) {
+    match GLOBAL_LOGGER.set(trace.clone()) {
       Ok(_) => {
         println!("GLOBAL_LOGGER initialized");
       },
       Err(_) => panic!("GLOBAL_LOGGER already initialized"),
-    });
+    };
 
     let write_thread_handle = thread::spawn(move || {
       Self::writer_loop(
@@ -227,11 +225,9 @@ impl Trace {
   }
 
   pub fn set_level(&self, level: LogLevel) {
-    GLOBAL_LOGGER.with(|logger_cell| {
-      if let Some(logger) = logger_cell.get() {
-        logger.level.store(level as u8, Ordering::Relaxed);
-      }
-    });
+    if let Some(logger) = GLOBAL_LOGGER.get() {
+      logger.level.store(level as u8, Ordering::Relaxed);
+    }
   }
 
   pub fn get_level(&self) -> LogLevel {
