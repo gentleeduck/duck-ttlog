@@ -1,4 +1,5 @@
 pub mod event;
+pub mod event_builder;
 pub mod file_listener;
 pub mod kv;
 pub mod lf_buffer;

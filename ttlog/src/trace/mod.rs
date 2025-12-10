@@ -225,6 +225,7 @@ impl Trace {
   }
 
   pub fn set_level(&self, level: LogLevel) {
+    self.level.store(level as u8, Ordering::Relaxed);
     if let Some(logger) = GLOBAL_LOGGER.get() {
       logger.level.store(level as u8, Ordering::Relaxed);
     }
@@ -291,7 +292,7 @@ impl Trace {
   ) {
     let mut last_periodic = Instant::now();
     let periodic_flush_interval = Duration::seconds(60).to_std().unwrap();
-    let service = SnapshotWriter::new(service_name, storage_path);
+    let service = SnapshotWriter::with_storage_path(service_name, storage_path);
 
     eprintln!(
       "[Trace] Writer thread started with buffer capacity: {}",

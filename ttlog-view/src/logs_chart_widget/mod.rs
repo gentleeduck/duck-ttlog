@@ -38,7 +38,7 @@ pub struct LogsChartWidget<'a> {
   pub show_debug: bool,
   pub show_trace: bool,
   pub focused: bool,
-  
+
   // Performance optimization
   pub cached_counts: Option<(u64, u64, u64, u64, u64, u64, u64)>,
   pub last_calculation_time: Option<Instant>,
@@ -78,14 +78,14 @@ impl<'a> LogsChartWidget<'a> {
     if let Some(cached) = self.cached_counts {
       return cached;
     }
-    
+
     // Set loading state for heavy operations
     if self.logs.len() > 1000 {
       self.processing_heavy_operation = true;
     }
-    
+
     let start_time = Instant::now();
-    
+
     let mut total = 0u64;
     let mut fatal = 0u64;
     let mut errors = 0u64;
@@ -107,20 +107,20 @@ impl<'a> LogsChartWidget<'a> {
     }
 
     let result = (total, fatal, errors, warns, info, debug, trace);
-    
+
     // Cache the result
     self.cached_counts = Some(result);
     self.last_calculation_time = Some(start_time);
     self.processing_heavy_operation = false;
-    
+
     result
   }
-  
+
   pub fn clear_cache(&mut self) {
     self.cached_counts = None;
     self.last_calculation_time = None;
   }
-  
+
   /// Method to update logs after new data comes in
   pub fn update_logs(&mut self, new_logs: &'a Vec<ResolvedLog>) {
     self.logs = new_logs;
@@ -128,11 +128,11 @@ impl<'a> LogsChartWidget<'a> {
     self.is_loading = false;
     self.clear_cache(); // Clear cache when logs change
   }
-  
+
   pub fn is_processing(&self) -> bool {
     self.processing_heavy_operation || self.is_loading
   }
-  
+
   pub fn get_status_text(&self) -> String {
     if self.is_loading {
       "Loading chart data...".to_string()

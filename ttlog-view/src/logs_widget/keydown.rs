@@ -52,7 +52,7 @@ impl<'a> LogsWidget<'a> {
       KeyCode::PageDown => self.page_down(),
       KeyCode::Home => self.go_to_top(),
       KeyCode::End => self.go_to_bottom(),
-      
+
       // Virtual scrolling controls for large datasets
       KeyCode::Char('J') => self.virtual_scroll_down(5), // Fast scroll down
       KeyCode::Char('K') => self.virtual_scroll_up(5),   // Fast scroll up
@@ -109,7 +109,7 @@ impl<'a> LogsWidget<'a> {
       KeyCode::Char('?') => {
         self.view_state = ViewState::Help;
       },
-      
+
       // Load more data
       KeyCode::Char('m') => {
         // Alternative key for loading more data

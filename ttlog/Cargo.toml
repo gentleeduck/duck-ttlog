@@ -24,10 +24,10 @@ ttlog-macros = { path = "../ttlog-macros", version = "0.1.19" }
 signal-hook = "0.3.18"
 ryu = "1.0.20"
 itoa = "1.0.15"
+tracing = { workspace = true }
 
 [dev-dependencies]
 # System utilities
 tempfile = { workspace = true }
 tabled = { workspace = true }
-
 

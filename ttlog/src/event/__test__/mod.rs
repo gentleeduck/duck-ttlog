@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod __test__ {
 
-  use serde_json;
+  use std::num::NonZeroU16;
   use std::sync::Arc;
 
   use crate::event::{Field, FieldValue, LogEvent, LogLevel};
@@ -11,11 +11,12 @@ mod __test__ {
   #[test]
   fn test_log_level_from_str() {
     assert_eq!(LogLevel::from_str("trace"), LogLevel::TRACE);
-    assert_eq!(LogLevel::from_str("debug"), LogLevel::DEBUG);
-    assert_eq!(LogLevel::from_str("info"), LogLevel::INFO);
+    assert_eq!(LogLevel::from_str("DEBUG"), LogLevel::DEBUG);
+    assert_eq!(LogLevel::from_str("Info"), LogLevel::INFO);
     assert_eq!(LogLevel::from_str("warn"), LogLevel::WARN);
     assert_eq!(LogLevel::from_str("error"), LogLevel::ERROR);
-    assert_eq!(LogLevel::from_str("unknown"), LogLevel::INFO); // default
+    assert_eq!(LogLevel::from_str("fatal"), LogLevel::FATAL);
+    assert_eq!(LogLevel::from_str("unknown"), LogLevel::INFO);
   }
 
   #[test]
@@ -47,10 +48,10 @@ mod __test__ {
     let event = LogEvent::new();
     assert_eq!(event.packed_meta, 0);
     assert_eq!(event.target_id, 0);
-    assert_eq!(event.message_id, 0);
-    assert_eq!(event.field_count, 0);
+    assert!(event.message_id.is_none());
+    assert!(event.kv_id.is_none());
     assert_eq!(event.file_id, 0);
-    assert_eq!(event.line, 0);
+    assert_eq!(event.position, (0, 0));
   }
 
   #[test]
@@ -77,31 +78,9 @@ mod __test__ {
     event.packed_meta = LogEvent::pack_meta(timestamp, level, thread_id);
 
     assert_eq!(event.timestamps(), timestamp);
+    assert_eq!(event.timestamp_millis(), timestamp);
     assert_eq!(event.level(), level);
     assert_eq!(event.thread_id(), thread_id);
-  }
-
-  #[test]
-  fn test_log_event_add_field() {
-    let mut event = LogEvent::new();
-
-    // Add first field
-    assert!(event.add_field(1, FieldValue::I64(42)));
-    assert_eq!(event.field_count, 1);
-    assert_eq!(event.fields[0].key_id, 1);
-    assert!(matches!(event.fields[0].value, FieldValue::I64(42)));
-
-    // Add second field
-    assert!(event.add_field(2, FieldValue::Bool(true)));
-    assert_eq!(event.field_count, 2);
-
-    // Add third field
-    assert!(event.add_field(3, FieldValue::F64(3.14)));
-    assert_eq!(event.field_count, 3);
-
-    // Try to add fourth field (should fail - max 3 fields)
-    assert!(!event.add_field(4, FieldValue::U64(999)));
-    assert_eq!(event.field_count, 3);
   }
 
   #[test]
@@ -109,19 +88,19 @@ mod __test__ {
     let mut event = LogEvent::new();
     event.packed_meta = 12345;
     event.target_id = 1;
-    event.message_id = 2;
-    event.field_count = 2;
-    event.file_id = 3;
-    event.line = 100;
+    event.message_id = NonZeroU16::new(2);
+    event.kv_id = NonZeroU16::new(3);
+    event.file_id = 4;
+    event.position = (10, 20);
 
     event.reset();
 
     assert_eq!(event.packed_meta, 0);
     assert_eq!(event.target_id, 0);
-    assert_eq!(event.message_id, 0);
-    assert_eq!(event.field_count, 0);
+    assert!(event.message_id.is_none());
+    assert!(event.kv_id.is_none());
     assert_eq!(event.file_id, 0);
-    assert_eq!(event.line, 0);
+    assert_eq!(event.position, (0, 0));
   }
 
   #[test]
@@ -146,110 +125,25 @@ mod __test__ {
       let serialized = serde_json::to_string(&value).expect("Failed to serialize");
       let deserialized: FieldValue =
         serde_json::from_str(&serialized).expect("Failed to deserialize");
-
-      match value {
-        FieldValue::Bool(b) => {
-          if let FieldValue::Bool(d) = deserialized {
-            assert_eq!(d, b);
-          } else {
-            panic!("Expected Bool variant");
-          }
-        },
-        FieldValue::U8(u) => {
-          if let FieldValue::U8(d) = deserialized {
-            assert_eq!(d, u);
-          } else {
-            panic!("Expected U8 variant");
-          }
-        },
-        FieldValue::U16(u) => {
-          if let FieldValue::U16(d) = deserialized {
-            assert_eq!(d, u);
-          } else {
-            panic!("Expected U16 variant");
-          }
-        },
-        FieldValue::U32(u) => {
-          if let FieldValue::U32(d) = deserialized {
-            assert_eq!(d, u);
-          } else {
-            panic!("Expected U32 variant");
-          }
-        },
-        FieldValue::U64(u) => {
-          if let FieldValue::U64(d) = deserialized {
-            assert_eq!(d, u);
-          } else {
-            panic!("Expected U64 variant");
-          }
-        },
-        FieldValue::I8(i) => {
-          if let FieldValue::I8(d) = deserialized {
-            assert_eq!(d, i);
-          } else {
-            panic!("Expected I8 variant");
-          }
-        },
-        FieldValue::I16(i) => {
-          if let FieldValue::I16(d) = deserialized {
-            assert_eq!(d, i);
-          } else {
-            panic!("Expected I16 variant");
-          }
-        },
-        FieldValue::I32(i) => {
-          if let FieldValue::I32(d) = deserialized {
-            assert_eq!(d, i);
-          } else {
-            panic!("Expected I32 variant");
-          }
-        },
-        FieldValue::I64(i) => {
-          if let FieldValue::I64(d) = deserialized {
-            assert_eq!(d, i);
-          } else {
-            panic!("Expected I64 variant");
-          }
-        },
-        FieldValue::F32(f) => {
-          if let FieldValue::F32(d) = deserialized {
-            assert!((d - f).abs() < f32::EPSILON);
-          } else {
-            panic!("Expected F32 variant");
-          }
-        },
-        FieldValue::F64(f) => {
-          if let FieldValue::F64(d) = deserialized {
-            assert!((d - f).abs() < f64::EPSILON);
-          } else {
-            panic!("Expected F64 variant");
-          }
-        },
-        FieldValue::StringId(id) => {
-          if let FieldValue::StringId(d) = deserialized {
-            assert_eq!(d, id);
-          } else {
-            panic!("Expected StringId variant");
-          }
-        },
-      }
+      assert_eq!(deserialized, value);
     }
   }
 
   #[test]
   fn test_event_builder_basic() {
     let interner = Arc::new(StringInterner::new());
-    let mut builder = EventBuilder::new(interner.clone());
+    let builder = EventBuilder::new(interner.clone());
 
     let event = builder.build_fast(12345, LogLevel::DEBUG, "test_module", "Hello World");
 
     assert_eq!(event.timestamp_millis(), 12345);
     assert_eq!(event.level(), LogLevel::DEBUG);
-    assert_eq!(event.field_count, 0);
+    assert!(event.kv_id.is_none());
 
-    // Verify string interning worked
     let target = interner.get_target(event.target_id).unwrap();
-    let message = interner.get_message(event.message_id).unwrap();
+    let message = interner
+      .get_message(event.message_id.unwrap().get())
+      .unwrap();
     assert_eq!(target.as_ref(), "test_module");
     assert_eq!(message.as_ref(), "Hello World");
   }
@@ -257,7 +151,7 @@ mod __test__ {
   #[test]
   fn test_event_builder_with_fields() {
     let interner = Arc::new(StringInterner::new());
-    let mut builder = EventBuilder::new(interner.clone());
+    let builder = EventBuilder::new(interner.clone());
 
     let fields = vec![
       ("key1".to_string(), FieldValue::I64(42)),
@@ -275,26 +169,17 @@ mod __test__ {
 
     assert_eq!(event.timestamp_millis(), 67890);
     assert_eq!(event.level(), LogLevel::ERROR);
-    assert_eq!(event.field_count, 3);
+    assert!(event.kv_id.is_some());
 
-    // Check field values
-    assert!(matches!(event.fields[0].value, FieldValue::I64(42)));
-    assert!(matches!(event.fields[1].value, FieldValue::Bool(true)));
-    assert!(matches!(event.fields[2].value, FieldValue::F64(f) if (f - 3.14).abs() < f64::EPSILON));
+    let kv_bytes = interner
+      .get_kv(event.kv_id.unwrap().get())
+      .expect("kv stored");
+    let kv_str = std::str::from_utf8(&kv_bytes).expect("utf8");
+    let parsed: serde_json::Value = serde_json::from_str(kv_str).expect("json");
 
-    // Verify string interning
-    let target = interner.get_target(event.target_id).unwrap();
-    let message = interner.get_message(event.message_id).unwrap();
-    assert_eq!(target.as_ref(), "error_module");
-    assert_eq!(message.as_ref(), "Error occurred");
-
-    // Verify field keys are interned
-    let key1 = interner.get_kv(event.fields[0].key_id).unwrap();
-    let key2 = interner.get_kv(event.fields[1].key_id).unwrap();
-    let key3 = interner.get_kv(event.fields[2].key_id).unwrap();
-    assert_eq!(key1.as_ref(), "key1");
-    assert_eq!(key2.as_ref(), "key2");
-    assert_eq!(key3.as_ref(), "key3");
+    assert_eq!(parsed["key1"], serde_json::json!(42));
+    assert_eq!(parsed["key2"], serde_json::json!(true));
+    assert!((parsed["key3"].as_f64().unwrap() - 3.14).abs() < f64::EPSILON);
   }
 
   #[test]
@@ -308,7 +193,7 @@ mod __test__ {
   fn test_log_event_display() {
     let mut event = LogEvent::new();
     event.target_id = 5;
-    event.message_id = 10;
+    event.message_id = NonZeroU16::new(10);
 
     let display_str = format!("{}", event);
     assert_eq!(display_str, "Event(target_id=5, message_id=10)");

@@ -2,6 +2,9 @@ mod __test__;
 
 use core::num;
 use serde::{Deserialize, Serialize};
+use std::fmt;
+use std::str::FromStr;
+use tracing::Level as TracingLevel;
 
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -15,6 +18,28 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
+  pub fn from_str(input: &str) -> Self {
+    match input.trim().to_ascii_lowercase().as_str() {
+      "trace" => LogLevel::TRACE,
+      "debug" => LogLevel::DEBUG,
+      "info" => LogLevel::INFO,
+      "warn" | "warning" => LogLevel::WARN,
+      "error" => LogLevel::ERROR,
+      "fatal" => LogLevel::FATAL,
+      _ => LogLevel::INFO,
+    }
+  }
+
+  pub fn from_tracing_level(level: &TracingLevel) -> Self {
+    match *level {
+      TracingLevel::TRACE => LogLevel::TRACE,
+      TracingLevel::DEBUG => LogLevel::DEBUG,
+      TracingLevel::INFO => LogLevel::INFO,
+      TracingLevel::WARN => LogLevel::WARN,
+      TracingLevel::ERROR => LogLevel::ERROR,
+    }
+  }
+
   #[inline]
   pub fn from_u8(level: &u8) -> LogLevel {
     match level {
@@ -53,7 +78,7 @@ impl LogLevel {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Serialize, Deserialize, Copy)]
+#[derive(Debug, Clone, Serialize, Deserialize, Copy, PartialEq)]
 #[serde(tag = "type", content = "value")]
 pub enum FieldValue {
   Bool(bool),
@@ -86,6 +111,29 @@ impl Field {
   }
 }
 
+impl FieldValue {
+  pub fn to_json_value(&self) -> serde_json::Value {
+    match self {
+      FieldValue::Bool(v) => serde_json::Value::Bool(*v),
+      FieldValue::U8(v) => serde_json::Value::Number((*v).into()),
+      FieldValue::U16(v) => serde_json::Value::Number((*v).into()),
+      FieldValue::U32(v) => serde_json::Value::Number((*v).into()),
+      FieldValue::U64(v) => serde_json::Value::Number((*v).into()),
+      FieldValue::I8(v) => serde_json::Value::Number((*v as i64).into()),
+      FieldValue::I16(v) => serde_json::Value::Number((*v as i64).into()),
+      FieldValue::I32(v) => serde_json::Value::Number((*v as i64).into()),
+      FieldValue::I64(v) => serde_json::Value::Number((*v).into()),
+      FieldValue::F32(v) => serde_json::Number::from_f64(*v as f64)
+        .map(serde_json::Value::Number)
+        .unwrap_or(serde_json::Value::Null),
+      FieldValue::F64(v) => serde_json::Number::from_f64(*v)
+        .map(serde_json::Value::Number)
+        .unwrap_or(serde_json::Value::Null),
+      FieldValue::StringId(id) => serde_json::Value::Number((*id).into()),
+    }
+  }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEvent {
   pub packed_meta: u64,
@@ -106,6 +154,11 @@ impl LogEvent {
   #[inline]
   pub fn timestamps(&self) -> u64 {
     self.packed_meta >> 12
+  }
+
+  #[inline]
+  pub fn timestamp_millis(&self) -> u64 {
+    self.timestamps()
   }
 
   #[inline]
@@ -167,3 +220,25 @@ const _: () = {
   assert!(std::mem::size_of::<LogEvent>() == 24);
   assert!(std::mem::align_of::<LogEvent>() >= 8);
 };
+
+impl FromStr for LogLevel {
+  type Err = ();
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    Ok(LogLevel::from_str(s))
+  }
+}
+
+impl fmt::Display for LogEvent {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(
+      f,
+      "Event(target_id={}, message_id={})",
+      self.target_id,
+      self
+        .message_id
+        .map(|id| id.get().to_string())
+        .unwrap_or_else(|| "None".to_string())
+    )
+  }
+}

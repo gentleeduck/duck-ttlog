@@ -1633,6 +1633,7 @@ dependencies = [
  "smallvec",
  "tabled",
  "tempfile",
+ "tracing",
  "ttlog-macros",
 ]
 

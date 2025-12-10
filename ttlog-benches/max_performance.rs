@@ -1,10 +1,10 @@
+use std::fs::File;
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::PathBuf;
 
 use tabled::{Table, Tabled};
 use ttlog::{
@@ -1003,7 +1003,7 @@ struct EndToEndResult {
   produced_per_sec: f64,
   #[tabled(rename = "Consumed/s")]
   consumed_per_sec: f64,
-  #[tabled(rename = "Drops")] 
+  #[tabled(rename = "Drops")]
   drops: u64,
   #[tabled(rename = "Bytes Written")]
   bytes_written: u64,
@@ -1022,7 +1022,9 @@ struct EndToEndTester {
 }
 
 impl EndToEndTester {
-  fn new(config: EndToEndConfig) -> Self { Self { config } }
+  fn new(config: EndToEndConfig) -> Self {
+    Self { config }
+  }
 
   fn run(&self) -> EndToEndResult {
     let cfg = &self.config;
@@ -1047,96 +1049,112 @@ impl EndToEndTester {
       SinkKind::File(path) => {
         let file = File::create(path).ok();
         file.map(|f| Arc::new(Mutex::new(BufWriter::new(f))))
-      }
+      },
     };
 
     // Producers
-    let producer_handles: Vec<_> = (0..cfg.producers).map(|pid| {
-      let buffer = Arc::clone(&buffer);
-      let barrier = Arc::clone(&barrier);
-      let stop_flag = Arc::clone(&stop_flag);
-      let produced = Arc::clone(&produced);
-      let drops = Arc::clone(&drops);
-      thread::spawn(move || {
-        let mut local_prod = 0u64;
-        let mut local_drops = 0u64;
-        let mut ctr = 0u64;
-        barrier.wait();
-        while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
-          // enqueue timestamp (us since t0) into position.0 for latency measurement
-          let ts_us = (Instant::now().duration_since(t0).as_micros() as u64) as u32;
-          let mut ev = create_minimal_event(pid as u64 * 1_000_000 + ctr);
-          ev.position = (ts_us as u32, 0);
-          if buffer.push(ev).is_ok() {
-            local_prod += 1;
-          } else {
-            local_drops += 1;
+    let producer_handles: Vec<_> = (0..cfg.producers)
+      .map(|pid| {
+        let buffer = Arc::clone(&buffer);
+        let barrier = Arc::clone(&barrier);
+        let stop_flag = Arc::clone(&stop_flag);
+        let produced = Arc::clone(&produced);
+        let drops = Arc::clone(&drops);
+        thread::spawn(move || {
+          let mut local_prod = 0u64;
+          let mut local_drops = 0u64;
+          let mut ctr = 0u64;
+          barrier.wait();
+          while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
+            // enqueue timestamp (us since t0) into position.0 for latency measurement
+            let ts_us = (Instant::now().duration_since(t0).as_micros() as u64) as u32;
+            let mut ev = create_minimal_event(pid as u64 * 1_000_000 + ctr);
+            ev.position = (ts_us as u32, 0);
+            if buffer.push(ev).is_ok() {
+              local_prod += 1;
+            } else {
+              local_drops += 1;
+            }
+            ctr += 1;
+            if (ctr & 0x3FF) == 0 {
+              thread::yield_now();
+            }
           }
-          ctr += 1;
-          if (ctr & 0x3FF) == 0 { thread::yield_now(); }
-        }
-        produced.fetch_add(local_prod, Ordering::Relaxed);
-        drops.fetch_add(local_drops, Ordering::Relaxed);
+          produced.fetch_add(local_prod, Ordering::Relaxed);
+          drops.fetch_add(local_drops, Ordering::Relaxed);
+        })
       })
-    }).collect();
+      .collect();
 
     // Consumers
-    let consumer_handles: Vec<_> = (0..cfg.consumers).map(|_cid| {
-      let buffer = Arc::clone(&buffer);
-      let barrier = Arc::clone(&barrier);
-      let stop_flag = Arc::clone(&stop_flag);
-      let consumed = Arc::clone(&consumed);
-      let latencies = Arc::clone(&latencies);
-      let bytes_written = Arc::clone(&bytes_written);
-      let writer = writer.clone();
-      thread::spawn(move || {
-        let mut local_cons = 0u64;
-        let mut local_lat: Vec<u64> = Vec::with_capacity(64_000);
-        let mut local_bytes = 0u64;
-        barrier.wait();
-        while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
-          if let Some(ev) = buffer.pop() {
-            // latency: now - enqueue
-            let now_us = Instant::now().duration_since(t0).as_micros() as u64;
-            let enq_us = ev.position.0 as u64;
-            let lat = now_us.saturating_sub(enq_us);
-            local_lat.push(lat);
+    let consumer_handles: Vec<_> = (0..cfg.consumers)
+      .map(|_cid| {
+        let buffer = Arc::clone(&buffer);
+        let barrier = Arc::clone(&barrier);
+        let stop_flag = Arc::clone(&stop_flag);
+        let consumed = Arc::clone(&consumed);
+        let latencies = Arc::clone(&latencies);
+        let bytes_written = Arc::clone(&bytes_written);
+        let writer = writer.clone();
+        thread::spawn(move || {
+          let mut local_cons = 0u64;
+          let mut local_lat: Vec<u64> = Vec::with_capacity(64_000);
+          let mut local_bytes = 0u64;
+          barrier.wait();
+          while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
+            if let Some(ev) = buffer.pop() {
+              // latency: now - enqueue
+              let now_us = Instant::now().duration_since(t0).as_micros() as u64;
+              let enq_us = ev.position.0 as u64;
+              let lat = now_us.saturating_sub(enq_us);
+              local_lat.push(lat);
 
-            // format and optionally write
-            if let Some(w) = &writer {
-              let mut w = w.lock().unwrap();
-              // minimal formatting to include hot-path work
-              let line = format!("{},{}:{}\n", ev.target_id, ev.file_id, ev.position.0);
-              if w.write_all(line.as_bytes()).is_ok() {
-                local_bytes += line.len() as u64;
+              // format and optionally write
+              if let Some(w) = &writer {
+                let mut w = w.lock().unwrap();
+                // minimal formatting to include hot-path work
+                let line = format!("{},{}:{}\n", ev.target_id, ev.file_id, ev.position.0);
+                if w.write_all(line.as_bytes()).is_ok() {
+                  local_bytes += line.len() as u64;
+                }
               }
-            }
 
-            local_cons += 1;
-          } else {
-            thread::yield_now();
+              local_cons += 1;
+            } else {
+              thread::yield_now();
+            }
+            if (local_cons & 0x3FF) == 0 {
+              thread::yield_now();
+            }
           }
-          if (local_cons & 0x3FF) == 0 { thread::yield_now(); }
-        }
-        // flush any writer
-        if let Some(w) = &writer { let _ = w.lock().unwrap().flush(); }
-        consumed.fetch_add(local_cons, Ordering::Relaxed);
-        bytes_written.fetch_add(local_bytes, Ordering::Relaxed);
-        // merge latencies
-        let mut g = latencies.lock().unwrap();
-        g.extend(local_lat);
+          // flush any writer
+          if let Some(w) = &writer {
+            let _ = w.lock().unwrap().flush();
+          }
+          consumed.fetch_add(local_cons, Ordering::Relaxed);
+          bytes_written.fetch_add(local_bytes, Ordering::Relaxed);
+          // merge latencies
+          let mut g = latencies.lock().unwrap();
+          g.extend(local_lat);
+        })
       })
-    }).collect();
+      .collect();
 
     // Start window
     let start = Instant::now();
     barrier.wait();
     let now = Instant::now();
-    if end > now { thread::sleep(end - now); }
+    if end > now {
+      thread::sleep(end - now);
+    }
     stop_flag.store(true, Ordering::Release);
 
-    for h in producer_handles { let _ = h.join(); }
-    for h in consumer_handles { let _ = h.join(); }
+    for h in producer_handles {
+      let _ = h.join();
+    }
+    for h in consumer_handles {
+      let _ = h.join();
+    }
 
     let dur = start.elapsed();
     let prod = produced.load(Ordering::Relaxed);
@@ -1148,13 +1166,18 @@ impl EndToEndTester {
     let mut l = latencies.lock().unwrap();
     l.sort_unstable();
     let p = |q: f64| -> f64 {
-      if l.is_empty() { return 0.0; }
-      let idx = ((q * (l.len() as f64 - 1.0)).round() as usize).min(l.len()-1);
+      if l.is_empty() {
+        return 0.0;
+      }
+      let idx = ((q * (l.len() as f64 - 1.0)).round() as usize).min(l.len() - 1);
       l[idx] as f64
     };
 
     EndToEndResult {
-      test_name: match cfg.sink { SinkKind::Null => "E2E-Null".into(), SinkKind::File(_) => "E2E-File".into() },
+      test_name: match cfg.sink {
+        SinkKind::Null => "E2E-Null".into(),
+        SinkKind::File(_) => "E2E-File".into(),
+      },
       producers: cfg.producers,
       consumers: cfg.consumers,
       buffer_size: cfg.buffer_size,

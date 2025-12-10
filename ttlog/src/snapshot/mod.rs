@@ -8,7 +8,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::sync::Arc;
 
-use crate::event::LogEvent;
+use crate::event::{LogEvent, LogLevel};
 use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
 use crate::string_interner::StringInterner;
 
@@ -32,6 +32,17 @@ pub struct ResolvedEvent {
   pub position: (u32, u32),
 }
 
+impl ResolvedEvent {
+  pub fn timestamp_millis(&self) -> u64 {
+    LogEvent::unpack_meta(self.packed_meta).0
+  }
+
+  pub fn level(&self) -> LogLevel {
+    let (_, level, _) = LogEvent::unpack_meta(self.packed_meta);
+    LogLevel::from_u8(&level)
+  }
+}
+
 #[derive(Debug, Clone)]
 pub struct SnapshotWriter {
   service: Cow<'static, str>,
@@ -39,7 +50,11 @@ pub struct SnapshotWriter {
 }
 
 impl SnapshotWriter {
-  pub fn new(service: impl Into<String>, storage_path: impl Into<String>) -> Self {
+  pub fn new(service: impl Into<String>) -> Self {
+    Self::with_storage_path(service, "./tmp/")
+  }
+
+  pub fn with_storage_path(service: impl Into<String>, storage_path: impl Into<String>) -> Self {
     Self {
       service: Cow::Owned(service.into()),
       storage_path: Cow::Owned(storage_path.into()),

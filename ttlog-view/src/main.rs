@@ -694,27 +694,27 @@ fn try_load_full_logs_fast(
   use std::fs::File;
   use std::io::{BufRead, BufReader};
   use std::time::{Duration, Instant};
-  
+
   let start_time = Instant::now();
   let timeout = Duration::from_millis(3000); // 3 second timeout
-  
+
   // Load all logs from the file efficiently
   let file = File::open(path)?;
   let reader = BufReader::with_capacity(256 * 1024, file); // 256KB buffer
   let mut events = Vec::new();
   let mut processed_lines = 0;
-  
+
   for line in reader.lines() {
     // Check timeout periodically
     if processed_lines % 1000 == 0 && start_time.elapsed() > timeout {
       return Err("Loading timeout exceeded".into());
     }
-    
+
     let line = line?;
     if line.trim().is_empty() {
       continue;
     }
-    
+
     // Parse log line efficiently
     if let Ok(log_event) = serde_json::from_str::<crate::logs::LogFileEvent>(&line) {
       let event = crate::logs::ResolvedLog {
@@ -729,10 +729,10 @@ fn try_load_full_logs_fast(
       };
       events.push(event);
     }
-    
+
     processed_lines += 1;
   }
-  
+
   events.shrink_to_fit();
   Ok(events)
 }

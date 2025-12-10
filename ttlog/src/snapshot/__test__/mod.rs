@@ -1,60 +1,67 @@
 #[cfg(test)]
 mod __test__ {
 
+  use std::sync::Arc;
+
   use crate::event::{FieldValue, LogEvent, LogLevel};
   use crate::event_builder::EventBuilder;
   use crate::lf_buffer::LockFreeRingBuffer;
   use crate::snapshot::{SnapShot, SnapshotWriter};
   use crate::string_interner::StringInterner;
-  use std::sync::Arc;
+
+  fn builder_with_ring(
+    capacity: usize,
+  ) -> (
+    Arc<LockFreeRingBuffer<LogEvent>>,
+    Arc<StringInterner>,
+    EventBuilder,
+  ) {
+    let interner = Arc::new(StringInterner::new());
+    let builder = EventBuilder::new(interner.clone());
+    let ring = LockFreeRingBuffer::new_shared(capacity);
+    (ring, interner, builder)
+  }
 
   #[test]
   fn test_snapshot_writer_new() {
     SnapshotWriter::new("test_service");
-    // SnapshotWriter doesn't expose fields directly, so we test through usage
-    assert!(true); // Constructor should not panic
   }
 
   #[test]
   fn test_create_snapshot_empty_ring() {
     let writer = SnapshotWriter::new("test_service");
-    let mut ring = LockFreeRingBuffer::<LogEvent>::new(10);
+    let (mut ring, interner, _) = builder_with_ring(10);
 
-    let snapshot = writer.create_snapshot(&mut ring, "test_reason");
-    assert!(snapshot.is_none()); // Empty ring should return None
+    let snapshot = writer.create_snapshot(&mut ring, "test_reason", interner);
+    assert!(snapshot.is_none());
   }
 
   #[test]
   fn test_create_snapshot_with_events() {
     let writer = SnapshotWriter::new("test_service");
-    let mut ring = LockFreeRingBuffer::<LogEvent>::new(10);
-
-    // Create some test events
-    let interner = Arc::new(StringInterner::new());
-    let mut builder = EventBuilder::new(interner);
+    let (mut ring, interner, builder) = builder_with_ring(10);
 
     let event1 = builder.build_fast(1000, LogLevel::INFO, "module1", "message1");
     let event2 = builder.build_fast(2000, LogLevel::ERROR, "module2", "message2");
-
-    // Add events to ring buffer
     ring.push(event1).unwrap();
     ring.push(event2).unwrap();
 
-    let snapshot = writer.create_snapshot(&mut ring, "test_reason").unwrap();
+    let snapshot = writer
+      .create_snapshot(&mut ring, "test_reason", interner.clone())
+      .unwrap();
 
-    // Verify snapshot structure
     assert_eq!(snapshot.service, "test_service");
     assert_eq!(snapshot.reason, "test_reason");
     assert_eq!(snapshot.events.len(), 2);
-    assert!(!snapshot.hostname.is_empty());
     assert!(snapshot.pid > 0);
-    assert!(!snapshot.created_at.is_empty());
+    assert!(!snapshot.hostname.is_empty());
 
-    // Verify events
     assert_eq!(snapshot.events[0].timestamp_millis(), 1000);
     assert_eq!(snapshot.events[0].level(), LogLevel::INFO);
     assert_eq!(snapshot.events[1].timestamp_millis(), 2000);
     assert_eq!(snapshot.events[1].level(), LogLevel::ERROR);
+
+    assert_eq!(snapshot.events[0].target, "module1");
   }
 
   #[test]
@@ -68,9 +75,8 @@ mod __test__ {
       events: vec![],
     };
 
-    // Test JSON serialization
-    let json = serde_json::to_string(&snapshot).expect("Failed to serialize");
-    let deserialized: SnapShot = serde_json::from_str(&json).expect("Failed to deserialize");
+    let json = serde_json::to_string(&snapshot).expect("serialize");
+    let deserialized: SnapShot = serde_json::from_str(&json).expect("deserialize");
 
     assert_eq!(deserialized.service, snapshot.service);
     assert_eq!(deserialized.hostname, snapshot.hostname);
@@ -83,11 +89,7 @@ mod __test__ {
   #[test]
   fn test_snapshot_with_fields() {
     let writer = SnapshotWriter::new("field_test_service");
-    let mut ring = LockFreeRingBuffer::<LogEvent>::new(10);
-
-    // Create event with fields
-    let interner = Arc::new(StringInterner::new());
-    let mut builder = EventBuilder::new(interner);
+    let (mut ring, interner, builder) = builder_with_ring(10);
 
     let fields = vec![
       ("user_id".to_string(), FieldValue::U64(12345)),
@@ -102,14 +104,18 @@ mod __test__ {
       "Authentication failed",
       &fields,
     );
-
     ring.push(event).unwrap();
 
-    let snapshot = writer.create_snapshot(&mut ring, "auth_failure").unwrap();
+    let snapshot = writer
+      .create_snapshot(&mut ring, "auth_failure", interner)
+      .unwrap();
 
     assert_eq!(snapshot.events.len(), 1);
-    assert_eq!(snapshot.events[0].field_count, 3);
     assert_eq!(snapshot.reason, "auth_failure");
+    let kv = &snapshot.events[0].kv;
+    assert_eq!(kv["user_id"], serde_json::json!(12345));
+    assert_eq!(kv["error_code"], serde_json::json!(-1));
+    assert_eq!(kv["success"], serde_json::json!(false));
   }
 
   #[test]
@@ -124,7 +130,6 @@ mod __test__ {
     };
 
     let cloned = original.clone();
-
     assert_eq!(cloned.service, original.service);
     assert_eq!(cloned.hostname, original.hostname);
     assert_eq!(cloned.pid, original.pid);
@@ -154,24 +159,23 @@ mod __test__ {
   #[test]
   fn test_multiple_snapshots_same_writer() {
     let writer = SnapshotWriter::new("multi_snapshot_service");
-    let mut ring1 = LockFreeRingBuffer::<LogEvent>::new(5);
-    let mut ring2 = LockFreeRingBuffer::<LogEvent>::new(5);
+    let (mut ring1, interner1, builder1) = builder_with_ring(5);
+    let (mut ring2, interner2, builder2) = builder_with_ring(5);
 
-    // Create events for first ring
-    let interner = Arc::new(StringInterner::new());
-    let mut builder = EventBuilder::new(interner);
+    ring1
+      .push(builder1.build_fast(1000, LogLevel::INFO, "module1", "first"))
+      .unwrap();
+    ring2
+      .push(builder2.build_fast(2000, LogLevel::ERROR, "module2", "second"))
+      .unwrap();
 
-    let event1 = builder.build_fast(1000, LogLevel::INFO, "module1", "first");
-    ring1.push(event1).unwrap();
+    let snapshot1 = writer
+      .create_snapshot(&mut ring1, "reason1", interner1)
+      .unwrap();
+    let snapshot2 = writer
+      .create_snapshot(&mut ring2, "reason2", interner2)
+      .unwrap();
 
-    let event2 = builder.build_fast(2000, LogLevel::ERROR, "module2", "second");
-    ring2.push(event2).unwrap();
-
-    // Create snapshots
-    let snapshot1 = writer.create_snapshot(&mut ring1, "reason1").unwrap();
-    let snapshot2 = writer.create_snapshot(&mut ring2, "reason2").unwrap();
-
-    // Both should have same service but different reasons
     assert_eq!(snapshot1.service, "multi_snapshot_service");
     assert_eq!(snapshot2.service, "multi_snapshot_service");
     assert_eq!(snapshot1.reason, "reason1");
@@ -183,11 +187,7 @@ mod __test__ {
   #[test]
   fn test_snapshot_large_event_count() {
     let writer = SnapshotWriter::new("large_test_service");
-    let mut ring = LockFreeRingBuffer::<LogEvent>::new(1000);
-
-    // Create many events
-    let interner = Arc::new(StringInterner::new());
-    let mut builder = EventBuilder::new(interner);
+    let (mut ring, interner, builder) = builder_with_ring(1000);
 
     for i in 0..500 {
       let event = builder.build_fast(
@@ -199,12 +199,12 @@ mod __test__ {
       ring.push(event).unwrap();
     }
 
-    let snapshot = writer.create_snapshot(&mut ring, "large_snapshot").unwrap();
+    let snapshot = writer
+      .create_snapshot(&mut ring, "large_snapshot", interner)
+      .unwrap();
 
     assert_eq!(snapshot.events.len(), 500);
     assert_eq!(snapshot.reason, "large_snapshot");
-
-    // Verify first and last events
     assert_eq!(snapshot.events[0].timestamp_millis(), 0);
     assert_eq!(snapshot.events[499].timestamp_millis(), 499);
   }

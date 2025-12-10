@@ -103,24 +103,6 @@ impl Logs {
     }
   }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
   pub fn get_logs_info(&self, path: &str) -> Result<LogsInfo, io::Error> {
     // Check cache first
     if let Ok(cache) = self.info_cache.lock() {
