@@ -20,7 +20,7 @@ lz4 = { workspace = true }
 gethostname = { workspace = true }
 crossbeam-channel.workspace = true
 crossbeam-queue = { workspace = true }
-ttlog-macros = { path = "../ttlog-macros", version = "0.1.14" }
+ttlog-macros = { path = "../ttlog-macros", version = "0.1.19" }
 signal-hook = "0.3.18"
 ryu = "1.0.20"
 itoa = "1.0.15"
