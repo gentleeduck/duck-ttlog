@@ -39,12 +39,7 @@ impl Parse for LogInput {
 
 fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
   let thread_id_expr = quote! {
-    {
-      static CACHED_THREAD_ID: std::sync::OnceLock<u8> = std::sync::OnceLock::new();
-      *CACHED_THREAD_ID.get_or_init(|| {
-        ttlog::utils::current_thread_id_u32() as u8
-      })
-    }
+    ttlog::utils::current_thread_id_u32() as u8
   };
 
   let common_constants = quote! {
@@ -104,7 +99,6 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
 
           #common_statics
           static MESSAGE_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-          static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
           if let Some(logger) = ttlog::trace::GLOBAL_LOGGER.get() {
             if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
@@ -123,7 +117,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
               let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
               let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
               let message_id = *MESSAGE_ID.get_or_init(|| logger.interner.intern_message(MESSAGE));
-              let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.into_inner()));
+              let kv_id = logger.interner.intern_kv(buf.into_inner());
 
               logger.send_event_fast(
                 LEVEL,
@@ -152,7 +146,6 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
           const NUM_VALUES: usize = #num_kvs;
 
           #common_statics
-          static KV_ID: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 
           if let Some(logger) = ttlog::trace::GLOBAL_LOGGER.get() {
             if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
@@ -168,7 +161,7 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
                 map.end().unwrap();
               }
 
-              let kv_id = *KV_ID.get_or_init(|| logger.interner.intern_kv(buf.into_inner()));
+              let kv_id = logger.interner.intern_kv(buf.into_inner());
               let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
               let file_id = *FILE_ID.get_or_init(|| logger.interner.intern_file(FILE));
 

@@ -1,4 +1,5 @@
-use std::fs::File;
+use std::fmt::Write as _;
+use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -6,11 +7,14 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::Utc;
+use crossbeam_channel::{bounded, unbounded, RecvTimeoutError};
 use tabled::{Table, Tabled};
 use ttlog::{
   event::{LogEvent, LogLevel},
   lf_buffer::LockFreeRingBuffer,
   string_interner::StringInterner,
+  trace::{EventBroadcast, ListenerMessage, Message, Trace},
 };
 
 // ============================================================================
@@ -112,38 +116,6 @@ struct BufferTest {
   notes: String,
 }
 
-#[derive(Debug, Clone, Tabled)]
-struct ConcurrencyResult {
-  #[tabled(rename = "Thread Count")]
-  thread_count: usize,
-  #[tabled(rename = "Success")]
-  success: String,
-  #[tabled(rename = "Duration")]
-  duration: String,
-  #[tabled(rename = "Ops/Thread")]
-  ops_per_thread: u64,
-  #[tabled(rename = "Total Ops/Sec")]
-  total_ops_per_sec: f64,
-}
-
-#[derive(Debug, Clone, Tabled)]
-struct MemoryTestResult {
-  #[tabled(rename = "Test Name")]
-  test_name: String,
-  #[tabled(rename = "Metric")]
-  metric: String,
-  #[tabled(rename = "Value")]
-  value: f64,
-  #[tabled(rename = "Unit")]
-  unit: String,
-  #[tabled(rename = "Duration")]
-  duration: String,
-  #[tabled(rename = "Config")]
-  config: String,
-  #[tabled(rename = "Additional Info")]
-  additional_info: String,
-}
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Tabled)]
 struct SummaryMetric {
@@ -194,52 +166,84 @@ impl ThroughputTester {
 
   /// Test maximum events per second
   fn max_events_per_second(&self, buffer_size: usize) -> TestResult {
-    // Warm-up (short) to stabilize CPU freq and caches
-    let warmup = Duration::from_millis(500);
-    let thread_count = 16; // can be parameterized
+    let thread_count = thread::available_parallelism()
+      .map(|n| n.get())
+      .unwrap_or(8)
+      .max(1);
     let event_count = Arc::new(AtomicU64::new(0));
     let barrier = Arc::new(Barrier::new(thread_count + 1));
     let stop_flag = Arc::new(AtomicBool::new(false));
 
-    // Optional: perform a brief warmup without measuring
-    let warm_end = Instant::now() + warmup;
-    while Instant::now() < warm_end {
-      std::hint::spin_loop();
-    }
+    let (msg_tx, _msg_rx) = bounded::<Message>(32);
+    let (listener_tx, _listener_rx) = bounded::<ListenerMessage>(16);
+    let (event_tx, event_rx) = unbounded::<EventBroadcast>();
 
-    // Spawn workers
+    let logger = Arc::new(Trace::new(
+      msg_tx,
+      listener_tx,
+      event_tx,
+      Arc::new(StringInterner::new()),
+      Arc::new(LockFreeRingBuffer::<LogEvent>::new(buffer_size)),
+    ));
+    logger.level.store(LogLevel::TRACE as u8, Ordering::Relaxed);
+
+    let target_id = logger.interner.intern_target("bench::real_path");
+    let file_id = logger.interner.intern_file(file!());
+    let message_id = std::num::NonZeroU16::new(logger.interner.intern_message("bench event"));
+
+    let drain_stop = Arc::clone(&stop_flag);
+    let drain_handle = thread::spawn(move || {
+      let mut drained = 0u64;
+      loop {
+        match event_rx.recv_timeout(Duration::from_millis(10)) {
+          Ok(_) => drained += 1,
+          Err(RecvTimeoutError::Timeout) => {
+            if drain_stop.load(Ordering::Acquire) {
+              while event_rx.try_recv().is_ok() {
+                drained += 1;
+              }
+              return drained;
+            }
+          },
+          Err(RecvTimeoutError::Disconnected) => return drained,
+        }
+      }
+    });
+
     let end = Instant::now() + self.test_duration;
     let handles: Vec<_> = (0..thread_count)
-      .map(|_tid| {
+      .map(|tid| {
+        let logger = Arc::clone(&logger);
         let event_count = Arc::clone(&event_count);
         let barrier = Arc::clone(&barrier);
         let stop_flag = Arc::clone(&stop_flag);
 
         thread::spawn(move || {
-          // reduce contention by batching
           let mut local = 0u64;
+          let thread_id = (tid & 0xFF) as u8;
           barrier.wait();
           while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
-            // micro work: count only (no tracing)
+            logger.send_event_fast(
+              LogLevel::INFO as u8,
+              target_id,
+              message_id,
+              thread_id,
+              file_id,
+              ((local & 0xFFFF_FFFF) as u32, 0),
+              None,
+            );
             local += 1;
             if (local & 0x3FF) == 0 {
-              // flush every 1024 ops
-              event_count.fetch_add(1024, Ordering::Relaxed);
-              local = 0;
+              thread::yield_now();
             }
           }
-          if local > 0 {
-            event_count.fetch_add(local, Ordering::Relaxed);
-          }
+          event_count.fetch_add(local, Ordering::Relaxed);
         })
       })
       .collect();
 
-    // Start measurement window
     let start = Instant::now();
     barrier.wait();
-
-    // Sleep until deadline (threads also check end)
     let now = Instant::now();
     if end > now {
       thread::sleep(end - now);
@@ -250,18 +254,19 @@ impl ThroughputTester {
       handle.join().unwrap();
     }
 
+    let drained = drain_handle.join().unwrap_or(0);
     let total_duration = start.elapsed();
     let total_events = event_count.load(Ordering::Relaxed);
     let events_per_second = total_events as f64 / total_duration.as_secs_f64();
 
     TestResult {
-      test_name: "Maximum Events per Second".to_string(),
-      metric: "Events per Second".to_string(),
+      test_name: "TTLog Real-Path Ingest Throughput".to_string(),
+      metric: "send_event_fast Calls per Second".to_string(),
       value: events_per_second,
       unit: "events/sec".to_string(),
       duration: format!("{:.3}s", total_duration.as_secs_f64()),
-      config: format!("threads={}, buffer={}", thread_count, buffer_size),
-      notes: format!("Total events: {}", total_events),
+      config: format!("threads={}, snapshot_buffer={}", thread_count, buffer_size),
+      notes: format!("Produced={}, drained_broadcast={}", total_events, drained),
     }
   }
 
@@ -283,6 +288,7 @@ impl ThroughputTester {
 
         thread::spawn(move || {
           let mut local_ops = 0u64;
+          let mut local_overwrites = 0u64;
           let mut counter = 0u64;
           barrier.wait();
 
@@ -290,9 +296,16 @@ impl ThroughputTester {
             let event = create_minimal_event(thread_id as u64 * 1_000_000 + counter);
             counter += 1;
 
-            // Push operation (count success)
-            if buffer.push(event).is_ok() {
-              local_ops += 1;
+            // Count pushes and track overwrite pressure explicitly.
+            match buffer.push(event) {
+              Ok(Some(_)) => {
+                local_ops += 1;
+                local_overwrites += 1;
+              },
+              Ok(None) => {
+                local_ops += 1;
+              },
+              Err(_) => {},
             }
 
             // Pop occasionally to maintain flow
@@ -308,6 +321,10 @@ impl ThroughputTester {
             }
           }
 
+          if local_overwrites > 0 {
+            // Keep compiler from optimizing away overwrite accounting in hot loops.
+            std::hint::black_box(local_overwrites);
+          }
           total_ops.fetch_add(local_ops, Ordering::Relaxed);
         })
       })
@@ -369,7 +386,7 @@ impl ConcurrencyTester {
       let total_ops = Arc::new(AtomicU64::new(0));
       let barrier = Arc::new(Barrier::new(*thread_count + 1));
       let stop_flag = Arc::new(AtomicBool::new(false));
-      let end = Instant::now() + Duration::from_millis(100);
+      let end = Instant::now() + self.test_duration;
 
       let handles: Vec<_> = (0..*thread_count)
         .map(|thread_id| {
@@ -421,7 +438,7 @@ impl ConcurrencyTester {
       let ops = total_ops.load(Ordering::Relaxed);
       let ops_per_sec = ops as f64 / test_duration.as_secs_f64();
 
-      if all_successful && test_duration < Duration::from_secs(10) {
+      if all_successful {
         successful_threads = *thread_count;
         max_ops_per_sec = max_ops_per_sec.max(ops_per_sec);
       } else {
@@ -442,7 +459,7 @@ impl ConcurrencyTester {
     }
   }
 
-  /// Test maximum concurrent buffers
+  /// Test maximum provisioned buffers under a single-thread setup pass.
   fn max_concurrent_buffers(&self, max_buffers: usize) -> TestResult {
     let start = Instant::now();
     let mut successful_buffers = 0;
@@ -495,13 +512,16 @@ impl ConcurrencyTester {
     let total_duration = start.elapsed();
 
     TestResult {
-      test_name: "Maximum Concurrent Buffers".to_string(),
-      metric: "Maximum Buffers".to_string(),
+      test_name: "Maximum Provisioned Buffers".to_string(),
+      metric: "Maximum Buffers (Single-thread setup)".to_string(),
       value: successful_buffers as f64,
       unit: "buffers".to_string(),
       duration: format!("{:.3}s", total_duration.as_secs_f64()),
       config: format!("ops_per_buffer=100"),
-      notes: format!("Total operations: {}", total_operations),
+      notes: format!(
+        "Single-thread provisioning smoke test, total operations: {}",
+        total_operations
+      ),
     }
   }
 }
@@ -564,17 +584,17 @@ impl MemoryEfficiencyTester {
     }
 
     let duration = start.elapsed();
-    let allocations_per_second = allocation_count as f64 / duration.as_secs_f64();
+    let constructions_per_second = allocation_count as f64 / duration.as_secs_f64();
 
     TestResult {
-      test_name: "Memory Allocation Rate".to_string(),
-      metric: "Allocations per Second".to_string(),
-      value: allocations_per_second,
-      unit: "allocs/sec".to_string(),
+      test_name: "Event Construction Rate".to_string(),
+      metric: "Constructed Events per Second".to_string(),
+      value: constructions_per_second,
+      unit: "events/sec".to_string(),
       duration: format!("{:.3}s", duration.as_secs_f64()),
       config: format!("events={}", allocation_count),
       notes: format!(
-        "Est. memory: {}",
+        "Constructed LogEvent values in a Vec; this is not allocator call counting (est. footprint: {})",
         Self::format_bytes((allocation_count as f64 * Self::estimate_event_size() as f64) as usize)
       ),
     }
@@ -583,45 +603,20 @@ impl MemoryEfficiencyTester {
   /// Test bytes per event efficiency
   fn bytes_per_event_efficiency(&self) -> TestResult {
     let start = Instant::now();
-    let test_counts = vec![1000, 5000, 10000, 25000];
-    let mut total_events = 0usize;
-    let mut total_calculated_memory = 0usize;
-
-    for count in test_counts {
-      let events: Vec<LogEvent> = (0..count)
-        .map(|i| create_variable_size_event(i as u64))
-        .collect();
-
-      total_events += events.len();
-
-      // Calculate more accurate memory usage per event
-      for event in &events {
-        let mut event_memory = std::mem::size_of::<LogEvent>();
-        total_calculated_memory += event_memory;
-      }
-
-      // Ensure events aren't optimized away
-      let _check = events.first().map(|e| e.packed_meta);
-    }
-
+    let event_struct_bytes = std::mem::size_of::<LogEvent>() as f64;
+    let sample_events: Vec<LogEvent> = (0..8).map(create_variable_size_event).collect();
+    std::hint::black_box(&sample_events);
     let duration = start.elapsed();
-    let bytes_per_event = if total_events > 0 {
-      total_calculated_memory as f64 / total_events as f64
-    } else {
-      0.0
-    };
 
     TestResult {
-      test_name: "Bytes per Event (Calculated)".to_string(),
-      metric: "Memory Efficiency".to_string(),
-      value: bytes_per_event,
+      test_name: "LogEvent Struct Size".to_string(),
+      metric: "Static Struct Footprint".to_string(),
+      value: event_struct_bytes,
       unit: "bytes/event".to_string(),
       duration: format!("{:.3}s", duration.as_secs_f64()),
-      config: format!("events={}", total_events),
-      notes: format!(
-        "Total calculated memory: {} (includes field overhead)",
-        Self::format_bytes(total_calculated_memory)
-      ),
+      config: "type=LogEvent".to_string(),
+      notes: "Excludes interned string payloads, allocator metadata, and listener/output buffers"
+        .to_string(),
     }
   }
 
@@ -649,9 +644,12 @@ impl MemoryEfficiencyTester {
 
           while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
             let event = create_minimal_event(thread_id as u64 * 1_000_000 + counter);
-            if buffer.push(event).is_ok() {
-              local_bytes += event_size;
-              counter += 1;
+            match buffer.push(event) {
+              Ok(_) => {
+                local_bytes += event_size;
+                counter += 1;
+              },
+              Err(_) => {},
             }
 
             if (counter % 100) == 0 {
@@ -700,7 +698,7 @@ impl MemoryEfficiencyTester {
 
   /// Estimate memory size of a standard event
   fn estimate_event_size() -> usize {
-    std::mem::size_of::<LogEvent>() + 128 // Base size + estimated overhead
+    std::mem::size_of::<LogEvent>()
   }
 
   /// Format bytes in human-readable format
@@ -798,9 +796,10 @@ impl BufferOperationsTester {
             let event = create_minimal_event(producer_id as u64 * 1000000 + event_counter);
             event_counter += 1;
 
-            // Count only successful pushes; track drops by ignoring failed pushes
-            if buffer.push(event).is_ok() {
-              local_ops += 1;
+            // Count pushes explicitly, including overwrite-mode success.
+            match buffer.push(event) {
+              Ok(_) => local_ops += 1,
+              Err(_) => {},
             }
 
             if local_ops % 10000 == 0 {
@@ -982,10 +981,12 @@ enum SinkKind {
 
 #[derive(Clone, Debug)]
 struct EndToEndConfig {
+  name: &'static str,
   duration: Duration,
   producers: usize,
   consumers: usize,
   buffer_size: usize,
+  target_produced_per_sec: Option<u64>,
   sink: SinkKind,
 }
 
@@ -1005,6 +1006,8 @@ struct EndToEndResult {
   consumed_per_sec: f64,
   #[tabled(rename = "Drops")]
   drops: u64,
+  #[tabled(rename = "Drop %")]
+  drop_rate_percent: String,
   #[tabled(rename = "Bytes Written")]
   bytes_written: u64,
   #[tabled(rename = "p50 (us)")]
@@ -1047,10 +1050,13 @@ impl EndToEndTester {
     let writer: Option<Arc<Mutex<BufWriter<File>>>> = match &cfg.sink {
       SinkKind::Null => None,
       SinkKind::File(path) => {
-        let file = File::create(path).ok();
-        file.map(|f| Arc::new(Mutex::new(BufWriter::new(f))))
+        let file = File::create(path)
+          .unwrap_or_else(|e| panic!("failed to create E2E output file {:?}: {}", path, e));
+        Some(Arc::new(Mutex::new(BufWriter::new(file))))
       },
     };
+    let producers_count = cfg.producers;
+    let target_produced_per_sec = cfg.target_produced_per_sec;
 
     // Producers
     let producer_handles: Vec<_> = (0..cfg.producers)
@@ -1061,19 +1067,42 @@ impl EndToEndTester {
         let produced = Arc::clone(&produced);
         let drops = Arc::clone(&drops);
         thread::spawn(move || {
+          let target_interval_ns = target_produced_per_sec.map(|rate| {
+            let per_thread_rate = (rate / producers_count.max(1) as u64).max(1);
+            (1_000_000_000u64 / per_thread_rate).max(1)
+          });
+          let mut next_emit_at = Instant::now();
           let mut local_prod = 0u64;
           let mut local_drops = 0u64;
           let mut ctr = 0u64;
           barrier.wait();
           while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
+            if let Some(interval_ns) = target_interval_ns {
+              let now = Instant::now();
+              if now < next_emit_at {
+                std::hint::spin_loop();
+                continue;
+              }
+              next_emit_at = now
+                .checked_add(Duration::from_nanos(interval_ns))
+                .unwrap_or(now);
+            }
+
             // enqueue timestamp (us since t0) into position.0 for latency measurement
             let ts_us = (Instant::now().duration_since(t0).as_micros() as u64) as u32;
             let mut ev = create_minimal_event(pid as u64 * 1_000_000 + ctr);
             ev.position = (ts_us as u32, 0);
-            if buffer.push(ev).is_ok() {
-              local_prod += 1;
-            } else {
-              local_drops += 1;
+            match buffer.push(ev) {
+              Ok(Some(_evicted)) => {
+                local_prod += 1;
+                local_drops += 1;
+              },
+              Ok(None) => {
+                local_prod += 1;
+              },
+              Err(_) => {
+                local_drops += 1;
+              },
             }
             ctr += 1;
             if (ctr & 0x3FF) == 0 {
@@ -1097,9 +1126,12 @@ impl EndToEndTester {
         let bytes_written = Arc::clone(&bytes_written);
         let writer = writer.clone();
         thread::spawn(move || {
+          const WRITE_BATCH_BYTES: usize = 64 * 1024;
+          const WRITE_BATCH_EVENTS: u64 = 256;
           let mut local_cons = 0u64;
           let mut local_lat: Vec<u64> = Vec::with_capacity(64_000);
           let mut local_bytes = 0u64;
+          let mut write_batch = String::with_capacity(WRITE_BATCH_BYTES);
           barrier.wait();
           while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
             if let Some(ev) = buffer.pop() {
@@ -1111,11 +1143,21 @@ impl EndToEndTester {
 
               // format and optionally write
               if let Some(w) = &writer {
-                let mut w = w.lock().unwrap();
-                // minimal formatting to include hot-path work
-                let line = format!("{},{}:{}\n", ev.target_id, ev.file_id, ev.position.0);
-                if w.write_all(line.as_bytes()).is_ok() {
-                  local_bytes += line.len() as u64;
+                // Batch lines locally to reduce lock/write frequency.
+                let _ = write!(
+                  &mut write_batch,
+                  "{},{}:{}\n",
+                  ev.target_id, ev.file_id, ev.position.0
+                );
+
+                if write_batch.len() >= WRITE_BATCH_BYTES
+                  || (local_cons % WRITE_BATCH_EVENTS) == 0
+                {
+                  let mut w = w.lock().unwrap();
+                  if w.write_all(write_batch.as_bytes()).is_ok() {
+                    local_bytes += write_batch.len() as u64;
+                    write_batch.clear();
+                  }
                 }
               }
 
@@ -1129,7 +1171,14 @@ impl EndToEndTester {
           }
           // flush any writer
           if let Some(w) = &writer {
-            let _ = w.lock().unwrap().flush();
+            let mut w = w.lock().unwrap();
+            if !write_batch.is_empty() {
+              if w.write_all(write_batch.as_bytes()).is_ok() {
+                local_bytes += write_batch.len() as u64;
+              }
+              write_batch.clear();
+            }
+            let _ = w.flush();
           }
           consumed.fetch_add(local_cons, Ordering::Relaxed);
           bytes_written.fetch_add(local_bytes, Ordering::Relaxed);
@@ -1174,16 +1223,18 @@ impl EndToEndTester {
     };
 
     EndToEndResult {
-      test_name: match cfg.sink {
-        SinkKind::Null => "E2E-Null".into(),
-        SinkKind::File(_) => "E2E-File".into(),
-      },
+      test_name: cfg.name.to_string(),
       producers: cfg.producers,
       consumers: cfg.consumers,
       buffer_size: cfg.buffer_size,
       produced_per_sec: prod as f64 / dur.as_secs_f64(),
       consumed_per_sec: cons as f64 / dur.as_secs_f64(),
       drops: drp,
+      drop_rate_percent: if prod > 0 {
+        format!("{:.2}", (drp as f64 * 100.0) / prod as f64)
+      } else {
+        "0.00".to_string()
+      },
       bytes_written: bytes,
       p50_us: p(0.50),
       p95_us: p(0.95),
@@ -1456,12 +1507,12 @@ impl ComprehensiveBenchmark {
 
     summary_metrics.extend_from_slice(&[
       SummaryMetric {
-        metric: "Allocations per Second".to_string(),
+        metric: "Constructed Events per Second".to_string(),
         value: memory_allocation_result.value,
         unit: memory_allocation_result.unit.clone(),
       },
       SummaryMetric {
-        metric: "Bytes per Event (approx)".to_string(),
+        metric: "LogEvent Struct Size".to_string(),
         value: bytes_per_event_result.value,
         unit: bytes_per_event_result.unit.clone(),
       },
@@ -1573,18 +1624,132 @@ impl BenchmarkSuite {
     }
 
     println!("\n📋 Benchmark Notes:");
-    println!("• All throughput/memory tests run with multiple trials for statistical confidence");
-    println!("• Mean ± StdDev reported; lower StdDev indicates more consistent performance");
-    println!("• Buffer sizes chosen to be realistic for production workloads");
-    println!("• Tests use synchronized thread start and deadline-based measurement windows");
-    println!("• Hot loops avoid tracing/logging overhead for accurate microbenchmarks");
+    println!("• Throughput/memory tests run with multiple trials and report mean/stddev/range");
+    println!("• Throughput section now uses ttlog `send_event_fast` real ingest path");
+    println!("• Buffer and memory metrics are labeled as synthetic where they are not full pipeline");
+    println!("• End-to-end results include drop counting that treats overwrite as data loss");
+    println!("• File sink benchmark now fails fast if output file cannot be created");
     println!("\n✅ Statistical benchmark suite completed successfully!");
   }
 }
 
+#[derive(Debug, Clone)]
+struct BenchmarkContext {
+  run_utc: String,
+  os: String,
+  arch: String,
+  logical_cpus: usize,
+  available_parallelism: usize,
+  build_profile: String,
+  debug_assertions_enabled: bool,
+  test_duration_secs: f64,
+  runs_per_test: usize,
+}
+
+impl BenchmarkContext {
+  fn collect(test_duration: Duration, runs_per_test: usize) -> Self {
+    let logical_cpus = std::thread::available_parallelism()
+      .map(|n| n.get())
+      .unwrap_or(1);
+    let build_profile = std::env::current_exe()
+      .ok()
+      .map(|p| p.to_string_lossy().to_string())
+      .map(|p| {
+        if p.contains("/target/release/") {
+          "release".to_string()
+        } else if p.contains("/target/debug/") {
+          "debug".to_string()
+        } else {
+          "unknown".to_string()
+        }
+      })
+      .unwrap_or_else(|| "unknown".to_string());
+    Self {
+      run_utc: Utc::now().to_rfc3339(),
+      os: std::env::consts::OS.to_string(),
+      arch: std::env::consts::ARCH.to_string(),
+      logical_cpus,
+      available_parallelism: logical_cpus,
+      build_profile,
+      debug_assertions_enabled: cfg!(debug_assertions),
+      test_duration_secs: test_duration.as_secs_f64(),
+      runs_per_test,
+    }
+  }
+}
+
+fn table_block<T: Tabled>(rows: &[T]) -> String {
+  if rows.is_empty() {
+    return "_No rows_".to_string();
+  }
+  format!("```\n{}\n```", Table::new(rows))
+}
+
+fn write_audit_report(
+  context: &BenchmarkContext,
+  suite: &BenchmarkSuite,
+  e2e_null_results: &[EndToEndResult],
+  e2e_file_results: &[EndToEndResult],
+) -> std::io::Result<PathBuf> {
+  fs::create_dir_all("ttlog-benches/reports")?;
+  let output_path = PathBuf::from("ttlog-benches/reports/latest.md");
+
+  let mut report = String::new();
+  report.push_str("# TTLog Benchmark Audit Report\n\n");
+  report.push_str("## Run Metadata\n");
+  report.push_str(&format!("- UTC: {}\n", context.run_utc));
+  report.push_str(&format!("- OS/Arch: {}/{}\n", context.os, context.arch));
+  report.push_str(&format!("- Logical CPUs: {}\n", context.logical_cpus));
+  report.push_str(&format!(
+    "- Available Parallelism: {}\n",
+    context.available_parallelism
+  ));
+  report.push_str(&format!("- Build Profile: {}\n", context.build_profile));
+  report.push_str(&format!(
+    "- Debug Assertions Enabled: {}\n",
+    context.debug_assertions_enabled
+  ));
+  report.push_str(&format!(
+    "- Per-trial Duration: {:.3}s\n",
+    context.test_duration_secs
+  ));
+  report.push_str(&format!("- Runs per Test: {}\n\n", context.runs_per_test));
+
+  report.push_str("## Integrity Policy\n");
+  report.push_str("- Throughput numbers must identify whether they are real-path or synthetic.\n");
+  report.push_str("- Drop counting must include overwrite-driven loss.\n");
+  report.push_str("- File sink benchmarks must fail if the file cannot be created.\n");
+  report.push_str("- Memory metrics must state what is included/excluded.\n\n");
+
+  report.push_str("## Throughput (Statistical)\n");
+  report.push_str(&table_block(&suite.throughput_results));
+  report.push_str("\n\n## Memory (Statistical)\n");
+  report.push_str(&table_block(&suite.memory_results));
+  report.push_str("\n\n## Buffer Ops (Statistical)\n");
+  report.push_str(&table_block(&suite.buffer_results));
+  report.push_str("\n\n## Concurrency\n");
+  report.push_str(&table_block(&suite.concurrency_results));
+  report.push_str("\n\n## End-to-End Null Sink\n");
+  report.push_str(&table_block(e2e_null_results));
+  report.push_str("\n\n## End-to-End File Sink\n");
+  report.push_str(&table_block(e2e_file_results));
+  report.push('\n');
+
+  fs::write(&output_path, report)?;
+  Ok(output_path)
+}
+
 fn main() {
-  let test_duration = Duration::from_secs(3); // Shorter per-trial, but multiple trials
-  let runs_per_test = 5; // Run each test 5 times for statistics
+  let test_duration_secs = std::env::var("TTLOG_BENCH_DURATION_SECS")
+    .ok()
+    .and_then(|v| v.parse::<u64>().ok())
+    .unwrap_or(3);
+  let runs_per_test = std::env::var("TTLOG_BENCH_RUNS")
+    .ok()
+    .and_then(|v| v.parse::<usize>().ok())
+    .unwrap_or(5);
+  let test_duration = Duration::from_secs(test_duration_secs);
+  let context = BenchmarkContext::collect(test_duration, runs_per_test);
   let benchmark = ComprehensiveBenchmark::new(test_duration, runs_per_test);
 
   let suite = benchmark.run_statistical_benchmarks();
@@ -1595,10 +1760,12 @@ fn main() {
   // =============================================================
   println!("\n🧪 End-to-End Pipeline Benchmarks:");
   let e2e_cfg_null = EndToEndConfig {
+    name: "E2E-Null",
     duration: test_duration,
     producers: 8,
     consumers: 1,
     buffer_size: 65_536,
+    target_produced_per_sec: None,
     sink: SinkKind::Null,
   };
   let e2e_null = EndToEndTester::new(e2e_cfg_null);
@@ -1607,17 +1774,47 @@ fn main() {
   let table = Table::new(&e2e_null_results).to_string();
   println!("{}", table);
 
-  // Optional file sink run (small file)
-  let e2e_cfg_file = EndToEndConfig {
+  // File sink sustained profile: tuned for low-loss operation.
+  let e2e_cfg_file_sustained = EndToEndConfig {
+    name: "E2E-File-Sustained",
+    duration: test_duration,
+    producers: 4,
+    consumers: 1,
+    buffer_size: 1_048_576,
+    target_produced_per_sec: Some(3_000_000),
+    sink: SinkKind::File(PathBuf::from("/tmp/ttlog_e2e_bench.log")),
+  };
+  let e2e_file_sustained = EndToEndTester::new(e2e_cfg_file_sustained);
+  let e2e_file_sustained_results = e2e_file_sustained.run_with_stats(runs_per_test);
+  println!("\n• E2E (File sink, sustained profile):");
+  let table = Table::new(&e2e_file_sustained_results).to_string();
+  println!("{}", table);
+
+  // File sink stress profile: overload behavior and drop characteristics.
+  let e2e_cfg_file_stress = EndToEndConfig {
+    name: "E2E-File-Stress",
     duration: test_duration,
     producers: 8,
     consumers: 1,
     buffer_size: 65_536,
+    target_produced_per_sec: None,
     sink: SinkKind::File(PathBuf::from("/tmp/ttlog_e2e_bench.log")),
   };
-  let e2e_file = EndToEndTester::new(e2e_cfg_file);
-  let e2e_file_results = e2e_file.run_with_stats(runs_per_test);
-  println!("\n• E2E (File sink):");
+  let e2e_file_stress = EndToEndTester::new(e2e_cfg_file_stress);
+  let e2e_file_stress_results = e2e_file_stress.run_with_stats(runs_per_test);
+  println!("\n• E2E (File sink, stress profile):");
+  let table = Table::new(&e2e_file_stress_results).to_string();
+  println!("{}", table);
+
+  let mut e2e_file_results = Vec::new();
+  e2e_file_results.extend(e2e_file_sustained_results);
+  e2e_file_results.extend(e2e_file_stress_results);
+  println!("\n• E2E (File sink, combined):");
   let table = Table::new(&e2e_file_results).to_string();
   println!("{}", table);
+
+  match write_audit_report(&context, &suite, &e2e_null_results, &e2e_file_results) {
+    Ok(path) => println!("\n📝 Wrote audit report: {}", path.display()),
+    Err(e) => eprintln!("\n[warn] failed to write audit report: {}", e),
+  }
 }

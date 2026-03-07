@@ -50,30 +50,6 @@ sysinfo = { version = "0.30", optional = true, default-features = false }
 [dev-dependencies]
 criterion = { workspace = true }
 
-# Criterion-style bench (Rust requires [[bench]] in Cargo.toml for harness=false)
-[[bench]]
-name = "distributed_bench"
-harness = false
-path = "distributed_bench.rs"
-
-# Binary runners for various suites
-[[bin]]
-name = "test_performance"
-path = "test_performance.rs"
-
-[[bin]]
-name = "heavy_stress_test"
-path = "heavy_stress_test.rs"
-
-[[bin]]
-name = "distributed_simulator"
-path = "distributed_simulator.rs"
-
 [[bin]]
 name = "max_performance"
 path = "max_performance.rs"
-
-[[bin]]
-name = "max-test"
-path = "max-test.rs"
-

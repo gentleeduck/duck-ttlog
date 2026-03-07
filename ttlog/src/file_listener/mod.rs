@@ -6,6 +6,8 @@ use std::io::{self, Write as IoWrite};
 use std::path::Path;
 use std::sync::Mutex;
 
+const FILE_FLUSH_THRESHOLD_BYTES: usize = 64 * 1024;
+
 /// File listener for structured logs
 pub struct FileListener {
   buffer: Mutex<String>,
@@ -37,8 +39,6 @@ impl FileListener {
 impl LogListener for FileListener {
   fn handle(&self, event: &LogEvent, interner: &StringInterner) {
     if let Ok(mut buf) = self.buffer.lock() {
-      buf.clear();
-
       // Keep Arc values alive by binding them to variables
       let target_arc = interner.get_target(event.target_id);
       let target = target_arc.as_deref().unwrap_or("unknown");
@@ -76,13 +76,31 @@ impl LogListener for FileListener {
         Ok(line) => {
           buf.push_str(&line);
           buf.push('\n'); // newline-delimited JSON (NDJSON)
-          if let Ok(mut file) = self.file.lock() {
-            let _ = file.write_all(buf.as_bytes());
+
+          // Batch writes to reduce per-event syscalls and lock contention.
+          if buf.len() >= FILE_FLUSH_THRESHOLD_BYTES {
+            if let Ok(mut file) = self.file.lock() {
+              if file.write_all(buf.as_bytes()).is_ok() {
+                buf.clear();
+              }
+            }
           }
         },
         Err(err) => {
           eprintln!("[Trace] Failed to serialize log JSON: {}", err);
         },
+      }
+    }
+  }
+
+  fn on_shutdown(&self) {
+    if let Ok(mut buf) = self.buffer.lock() {
+      if let Ok(mut file) = self.file.lock() {
+        if !buf.is_empty() {
+          let _ = file.write_all(buf.as_bytes());
+          buf.clear();
+        }
+        let _ = file.flush();
       }
     }
   }
