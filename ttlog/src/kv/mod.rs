@@ -1,3 +1,5 @@
+mod __test__;
+
 use serde::{
   de::{self, Visitor},
   Deserialize, Deserializer, Serialize,

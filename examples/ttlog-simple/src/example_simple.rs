@@ -12,11 +12,17 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   trace.add_listener(Arc::new(StdoutListener::new()));
   trace.set_level(ttlog::event::LogLevel::TRACE);
 
-  let handle = std::thread::spawn(|| loop {
-    debug!("Waiting for compaction");
+  // let handle = std::thread::spawn(|| loop {
+  //   debug!("Waiting for compaction");
+  //   std::thread::sleep(std::time::Duration::from_secs(1));
+  // });
+  // handle.join().unwrap();
+
+  for i in 0..10 {
+    let x = i;
+    trace!("Hello from thread {}", i = i);
     std::thread::sleep(std::time::Duration::from_secs(1));
-  });
-  handle.join().unwrap();
+  }
 
   // trace!("Application started successfullyy");
   // debug!("Application started successfullyy");

@@ -1,3 +1,5 @@
+mod __test__;
+
 use std::num::NonZeroU16;
 use std::sync::Arc;
 
