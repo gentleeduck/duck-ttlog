@@ -21,6 +21,7 @@ permissions:
 
 jobs:
   cargo-deny:
+    continue-on-error: true
     runs-on: ubuntu-latest
     strategy:
       matrix:

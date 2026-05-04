@@ -5,6 +5,9 @@ pub mod kv;
 pub mod lf_buffer;
 pub mod listener;
 pub mod panic_hook;
+// signal_hook uses unix-only signal numbers (SIGBUS, SIGCHLD, etc).
+// Windows has no equivalents; gate the module out there.
+#[cfg(unix)]
 pub mod signal_hook;
 pub mod snapshot;
 pub mod stdout_listener;
