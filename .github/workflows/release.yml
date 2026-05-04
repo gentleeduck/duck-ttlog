@@ -1,16 +1,15 @@
 name: Release
 
+# Manual trigger only. Run from Actions tab when you want to publish.
+# Requires CARGO_REGISTRY_TOKEN secret + crates-io environment with
+# required reviewer.
 on:
-  push:
-    branches: [master, main]
+  workflow_dispatch:
 
 permissions:
   contents: write
   pull-requests: write
-  id-token: write
 
-# Single in-flight release at a time across the org's pinned crates so
-# release-plz never trips over itself if two pushes land back-to-back.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -35,8 +34,6 @@ jobs:
   release-plz-publish:
     name: "release-plz: tag + publish to crates.io"
     needs: release-plz-pr
-    # The crates-io environment requires manual approval before this job
-    # runs, so an accidental merge to master cannot push to crates.io.
     environment: crates-io
     runs-on: ubuntu-latest
     steps:
