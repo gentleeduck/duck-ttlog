@@ -3,7 +3,7 @@ use ttlog::{
   file_listener::FileListener,
   stdout_listener::StdoutListener,
   trace::Trace,
-  ttlog_macros::{debug, error, fatal, info, trace, warn},
+  ttlog_macros::{info, trace},
 };
 
 pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +19,7 @@ pub fn example_simple() -> Result<(), Box<dyn std::error::Error>> {
   // handle.join().unwrap();
 
   for i in 0..10 {
-    let x = i;
+    let _x = i;
     trace!("Hello from thread {}", i = i);
     std::thread::sleep(std::time::Duration::from_secs(1));
   }

@@ -246,7 +246,7 @@ mod __test__ {
       let handle = thread::spawn(move || {
         let mut consumed = 0;
         while consumed < (num_producers * items_per_producer) / num_consumers {
-          if let Some(_) = buffer_clone.pop() {
+          if buffer_clone.pop().is_some() {
             consumed += 1;
           } else {
             thread::sleep(Duration::from_millis(1));

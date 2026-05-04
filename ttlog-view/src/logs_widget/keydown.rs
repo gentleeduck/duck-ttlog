@@ -60,36 +60,32 @@ impl<'a> LogsWidget<'a> {
       KeyCode::Char('g') => self.go_to_top(),            // Go to beginning
 
       // View log detail
-      KeyCode::Enter => {
-        if !self.filtered_and_sorted_logs().is_empty() {
+      KeyCode::Enter
+        if !self.filtered_and_sorted_logs().is_empty() => {
           self.view_state = ViewState::LogDetail;
           self.scroll_offset = 0;
-        }
-      },
+        },
 
       // Search
       KeyCode::Char('/') => {
         self.view_state = ViewState::Search;
       },
-      KeyCode::Char('n') => {
-        if !self.search_query.is_empty() {
+      KeyCode::Char('n')
+        if !self.search_query.is_empty() => {
           self.move_cursor_down(); // Simple next implementation
-        }
-      },
-      KeyCode::Char('N') => {
-        if !self.search_query.is_empty() {
+        },
+      KeyCode::Char('N')
+        if !self.search_query.is_empty() => {
           self.move_cursor_up(); // Simple previous implementation
-        }
-      },
+        },
 
       // Filtering and sorting
       KeyCode::Char('l') => self.cycle_level_filter(),
-      KeyCode::Char('L') => {
+      KeyCode::Char('L')
         // Load full dataset if currently showing sample data
-        if self.is_sample_data {
+        if self.is_sample_data => {
           self.request_full_data_load();
-        }
-      },
+        },
       KeyCode::Char('s') => self.cycle_sort_column(),
       KeyCode::Char('r') => self.toggle_sort_order(),
       KeyCode::Char('c') => self.clear_all_filters(),
@@ -111,12 +107,11 @@ impl<'a> LogsWidget<'a> {
       },
 
       // Load more data
-      KeyCode::Char('m') => {
+      KeyCode::Char('m')
         // Alternative key for loading more data
-        if self.is_sample_data {
+        if self.is_sample_data => {
           self.request_full_data_load();
-        }
-      },
+        },
 
       _ => {},
     }

@@ -1,0 +1,21 @@
+echo "[husky] pre-push: running CI-equivalent checks..."
+
+set -e
+
+# Mirrors .github/workflows/ci.yml. ttlog has pre-existing style debt;
+# clippy runs at warn level here. Tightening to -D warnings is a
+# follow-up cleanup, not a release-blocking change.
+
+echo "[husky] (1/4) cargo fmt --all -- --check"
+cargo fmt --all -- --check
+
+echo "[husky] (2/4) cargo clippy --workspace --all-targets"
+cargo clippy --workspace --all-targets
+
+echo "[husky] (3/4) cargo test --workspace"
+cargo test --workspace
+
+echo "[husky] (4/4) cargo check"
+cargo check --workspace
+
+echo "[husky] pre-push: all checks passed"

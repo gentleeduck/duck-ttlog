@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/gentleeduck/duck-mc/tree/master/dmc-docs
+    about: Read the per-crate, architecture, and integration guides first.
+  - name: Discussions
+    url: https://github.com/gentleeduck/duck-mc/discussions
+    about: Ask questions or share ideas without filing an issue.
+  - name: Security
+    url: https://github.com/gentleeduck/duck-mc/blob/master/SECURITY.md
+    about: For security-sensitive reports, follow the disclosure policy.

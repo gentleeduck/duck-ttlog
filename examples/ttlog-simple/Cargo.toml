@@ -22,3 +22,6 @@ syn.workspace = true
 # Internal dependencies
 ttlog = { path = "../../ttlog" }
 uuid = { version = "1.18.0" , features = ["v4"] }
+
+[lints]
+workspace = true

@@ -30,3 +30,6 @@ tracing = { workspace = true }
 # System utilities
 tempfile = { workspace = true }
 tabled = { workspace = true }
+
+[lints]
+workspace = true

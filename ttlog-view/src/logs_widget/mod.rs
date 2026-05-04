@@ -770,11 +770,7 @@ impl<'a> LogsWidget<'a> {
 
   pub fn scroll_down(&mut self, lines: usize) {
     let total_count = self.get_total_filtered_count();
-    let max_offset = if total_count > self.virtual_window_size {
-      total_count - self.virtual_window_size
-    } else {
-      0
-    };
+    let max_offset = total_count.saturating_sub(self.virtual_window_size);
 
     self.virtual_scroll_offset = (self.virtual_scroll_offset + lines).min(max_offset);
     self.update_selection_for_virtual_scroll();

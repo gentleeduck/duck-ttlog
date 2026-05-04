@@ -372,7 +372,6 @@ fn app_run(mut terminal: DefaultTerminal) -> Result<()> {
         if let Ok(new_log_files) = discover_log_files(LOG_DIRECTORY) {
           start_file_monitoring_thread(file_monitor.clone(), new_log_files);
         }
-      } else {
       }
 
       app_state.is_refreshing = false;
@@ -676,10 +675,7 @@ fn try_load_logs_ultra_fast(
     },
     Err(_) => {
       // Fallback to sample if full loading fails
-      match load_log_sample(&main_log_file, 100) {
-        Ok(sample_logs) => sample_logs,
-        Err(_) => Vec::new(),
-      }
+      load_log_sample(&main_log_file, 100).unwrap_or_default()
     },
   };
 

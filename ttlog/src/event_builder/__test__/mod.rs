@@ -29,7 +29,9 @@ mod __test__ {
     let target = interner.get_target(event.target_id).unwrap();
     assert_eq!(target.as_ref(), "my_mod");
 
-    let msg = interner.get_message(event.message_id.unwrap().get()).unwrap();
+    let msg = interner
+      .get_message(event.message_id.unwrap().get())
+      .unwrap();
     assert_eq!(msg.as_ref(), "hello");
   }
 
@@ -59,8 +61,7 @@ mod __test__ {
     assert!(event.kv_id.is_some());
 
     let kv_bytes = interner.get_kv(event.kv_id.unwrap().get()).unwrap();
-    let parsed: serde_json::Value =
-      serde_json::from_slice(&kv_bytes).unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
     assert_eq!(parsed["count"], serde_json::json!(10));
     assert_eq!(parsed["active"], serde_json::json!(true));
   }
@@ -79,8 +80,7 @@ mod __test__ {
 
     let event = builder.build_with_fields(0, LogLevel::DEBUG, "math", "const", &fields);
     let kv_bytes = interner.get_kv(event.kv_id.unwrap().get()).unwrap();
-    let parsed: serde_json::Value =
-      serde_json::from_slice(&kv_bytes).unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
     let pi = parsed["pi"].as_f64().unwrap();
     assert!((pi - 3.14159).abs() < 1e-5);
   }
@@ -95,8 +95,7 @@ mod __test__ {
 
     let event = builder.build_with_fields(0, LogLevel::WARN, "err", "neg", &fields);
     let kv_bytes = interner.get_kv(event.kv_id.unwrap().get()).unwrap();
-    let parsed: serde_json::Value =
-      serde_json::from_slice(&kv_bytes).unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
     assert_eq!(parsed["code"], serde_json::json!(-1));
     assert_eq!(parsed["big"], serde_json::json!(-9999999));
   }
@@ -145,8 +144,7 @@ mod __test__ {
 
     let event = builder.build_with_fields(0, LogLevel::INFO, "t", "m", &fields);
     let kv_bytes = interner.get_kv(event.kv_id.unwrap().get()).unwrap();
-    let parsed: serde_json::Value =
-      serde_json::from_slice(&kv_bytes).unwrap();
+    let parsed: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
     assert_eq!(parsed["ref_id"], serde_json::json!(42));
   }
 

@@ -4,7 +4,6 @@
 
 use lz4::block::decompress;
 use serde::{Deserialize, Serialize};
-use serde_cbor;
 use std::env;
 use std::fs::File;
 use std::io::Read;
@@ -71,7 +70,7 @@ fn display_snapshot(snapshot: &Snapshot) {
 }
 
 fn format_timestamp(timestamp: u64) -> String {
-  use std::time::{Duration, SystemTime, UNIX_EPOCH};
+  use std::time::{Duration, UNIX_EPOCH};
 
   let system_time = UNIX_EPOCH + Duration::from_millis(timestamp);
   format!("{:?}", system_time)
@@ -227,7 +226,6 @@ pub fn read_latest_snapshot() -> Result<Snapshot, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use std::fs;
 
   #[test]
   fn test_can_list_snapshot_files() {

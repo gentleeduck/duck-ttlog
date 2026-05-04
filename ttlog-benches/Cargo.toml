@@ -53,3 +53,6 @@ criterion = { workspace = true }
 [[bin]]
 name = "max_performance"
 path = "max_performance.rs"
+
+[lints]
+workspace = true

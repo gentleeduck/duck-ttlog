@@ -117,24 +117,21 @@ impl Widget for ListWidget {
     use crossterm::event::MouseEventKind;
 
     if let Some(area) = self.area {
-      match me.kind {
-        MouseEventKind::Down(_) => {
-          // Tabs are drawn on one row (area.top())
-          if me.row == area.top() {
-            let mut x = area.left() + 1; // +1 for left border
-            for (i, item) in self.items.iter().enumerate() {
-              let tab_width = item.as_str().len() as u16 + 2; // <-- FIX HERE
+      if let MouseEventKind::Down(_) = me.kind {
+        // Tabs are drawn on one row (area.top())
+        if me.row == area.top() {
+          let mut x = area.left() + 1; // +1 for left border
+          for (i, item) in self.items.iter().enumerate() {
+            let tab_width = item.as_str().len() as u16 + 2; // <-- FIX HERE
 
-              if me.column >= x && me.column < x + tab_width {
-                self.selected = i;
-                break;
-              }
-
-              x += tab_width;
+            if me.column >= x && me.column < x + tab_width {
+              self.selected = i;
+              break;
             }
+
+            x += tab_width;
           }
-        },
-        _ => {},
+        }
       }
     }
   }

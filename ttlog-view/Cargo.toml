@@ -39,3 +39,6 @@ ratatui = { version = "0.28", features = ["all-widgets", "crossterm"] }
 crossbeam-channel.workspace = true
 rand = "0.8"
 
+
+[lints]
+workspace = true

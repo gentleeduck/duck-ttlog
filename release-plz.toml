@@ -1,0 +1,14 @@
+# https://release-plz.ieni.dev/docs/config
+[workspace]
+changelog_update = true
+changelog_path = "./CHANGELOG.md"
+git_release_enable = true
+git_release_type = "auto"
+git_tag_enable = true
+publish = true
+publish_allow_dirty = false
+semver_check = true
+allow_dirty = false
+
+# Per-crate overrides go in [[package]] blocks below.
+# `publish = false` on dmc-napi is set in dmc-napi/Cargo.toml.

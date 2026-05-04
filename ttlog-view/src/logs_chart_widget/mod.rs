@@ -207,7 +207,7 @@ impl<'a> LogsChartWidget<'a> {
   /// and bottom shortcuts in right panel with separator + padding.
   fn render_colored_bars(&mut self, f: &mut Frame<'_>, area: Rect) {
     let bars = self.build_bars();
-    let n = bars.len() as usize;
+    let n = bars.len();
     let (total, _, _, _, _, _, _) = self.aggregate_counts();
     let max_value = bars.iter().map(|(_, v, _)| *v).max().unwrap_or(1).max(1);
 

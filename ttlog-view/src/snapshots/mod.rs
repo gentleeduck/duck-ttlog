@@ -24,7 +24,7 @@ impl Snapshots {
     let mut snapshots: Vec<SnapshotFile> = vec![];
     for dir in &snapshots_dirs {
       // Read the snapshot dir
-      let snapshot_compressed = fs::read(&dir.path())?;
+      let snapshot_compressed = fs::read(dir.path())?;
       // Decompress the snapshot
       let snapshot_decompressed = decompress(&snapshot_compressed, None)?;
       // Deserialize the snapshot

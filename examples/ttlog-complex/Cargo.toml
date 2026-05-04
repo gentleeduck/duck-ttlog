@@ -30,3 +30,6 @@ rand = { workspace = true }
 
 # Internal dependencies
 ttlog = { path = "../../ttlog" }
+
+[lints]
+workspace = true

@@ -1,0 +1,44 @@
+# https://github.com/crate-ci/typos
+[files]
+extend-exclude = [
+  "target/",
+  "node_modules/",
+  "tmp/",
+  "tmp*/",
+  "temp/",
+  "temp*/",
+  ".next/",
+  ".gentleduck/",
+  ".dmc/",
+  "Cargo.lock",
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "duck-benchmarks/**/*.json",
+  "duck-benchmarks/**/*.svg",
+  "dmc-highlight/assets/",
+  "*.svg",
+]
+
+[default]
+extend-ignore-identifiers-re = [
+  # napi triple naming, intentional
+  "freebsd-x64",
+  # rust toolchain conventions
+  "rustfmt",
+  "clippy",
+  # crate names
+  "duktape",
+  "ducc",
+  "katex",
+  "syntect",
+  "pulldown-latex",
+  "pulldown",
+  "rehype",
+  "remark",
+  "shiki",
+]
+
+[default.extend-words]
+# project-specific words that look misspelled but aren't
+napi = "napi"
+gentleduck = "gentleduck"

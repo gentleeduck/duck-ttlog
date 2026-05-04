@@ -1,0 +1,75 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly.
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened. What did you expect.
+      placeholder: |
+        Compiling `foo.mdx` produces empty output when `math: true` is set.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Smallest input + config that triggers the bug.
+      render: markdown
+    validations:
+      required: true
+
+  - type: input
+    id: dmc-version
+    attributes:
+      label: dmc version
+      description: Output of `dmc --version` or `@gentleduck/md` version from package.json.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - "@gentleduck/md (npm)"
+        - "dmc CLI"
+        - "Rust crate"
+        - "Sidecar"
+        - "Other / unsure"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / arch
+      placeholder: "linux x86_64 / macos arm64 / windows x64"
+    validations:
+      required: true
+
+  - type: input
+    id: node
+    attributes:
+      label: Node version (if relevant)
+      placeholder: "v20.11.0"
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / diagnostics
+      description: Any stderr output, panics, or stack traces.
+      render: shell
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I am on the latest 0.1.x release.
+          required: true

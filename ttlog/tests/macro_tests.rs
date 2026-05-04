@@ -124,7 +124,10 @@ fn macro_empty_call() {
   trace!();
 
   let events = logger.snapshot_buffer.take_snapshot();
-  assert!(!events.is_empty(), "empty trace!() should still emit an event");
+  assert!(
+    !events.is_empty(),
+    "empty trace!() should still emit an event"
+  );
 
   let event = &events[0];
   assert!(event.message_id.is_none());
@@ -154,10 +157,7 @@ fn macro_kv_only() {
   );
   assert!(event.kv_id.is_some(), "kv-only call should have kv_id");
 
-  let kv_bytes = logger
-    .interner
-    .get_kv(event.kv_id.unwrap().get())
-    .unwrap();
+  let kv_bytes = logger.interner.get_kv(event.kv_id.unwrap().get()).unwrap();
   let kv: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
   // i32 uses fallback (plain number), not the string-wrapped path
   assert_eq!(kv["answer"], serde_json::json!(42));
@@ -183,10 +183,7 @@ fn macro_message_with_kv() {
   assert_eq!(event.level(), LogLevel::WARN);
   assert!(event.kv_id.is_some());
 
-  let kv_bytes = logger
-    .interner
-    .get_kv(event.kv_id.unwrap().get())
-    .unwrap();
+  let kv_bytes = logger.interner.get_kv(event.kv_id.unwrap().get()).unwrap();
   let kv: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
   assert_eq!(kv["user"], serde_json::json!("alice"));
   assert_eq!(kv["count"], serde_json::json!("3"));
@@ -366,7 +363,12 @@ fn macro_timestamp_is_recent() {
   assert_eq!(events.len(), 1);
 
   let ts = events[0].timestamp_millis();
-  assert!(ts >= before, "timestamp {} should be >= before {}", ts, before);
+  assert!(
+    ts >= before,
+    "timestamp {} should be >= before {}",
+    ts,
+    before
+  );
   assert!(ts <= after, "timestamp {} should be <= after {}", ts, after);
 }
 

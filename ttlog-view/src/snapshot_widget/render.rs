@@ -131,7 +131,7 @@ impl<'a> SnapshotWidget<'a> {
   fn handle_snapshot_detail_keys(&mut self, key: crossterm::event::KeyEvent) {
     let events = self.get_current_snapshot_events();
 
-    let has_events = events.map_or(false, |e| !e.is_empty());
+    let has_events = events.is_some_and(|e| !e.is_empty());
     if has_events {
       // Handle events table navigation
       match key.code {
@@ -147,11 +147,9 @@ impl<'a> SnapshotWidget<'a> {
         KeyCode::PageDown => self.events_page_down(),
         KeyCode::Home => self.events_go_to_top(),
         KeyCode::End => self.events_go_to_bottom(),
-        KeyCode::Enter => {
-          if has_events {
-            self.view_state = ViewState::EventDetail;
-            self.events_scroll_offset = 0;
-          }
+        KeyCode::Enter if has_events => {
+          self.view_state = ViewState::EventDetail;
+          self.events_scroll_offset = 0;
         },
         _ => {},
       }
@@ -212,28 +210,22 @@ impl<'a> SnapshotWidget<'a> {
       KeyCode::End => self.go_to_bottom(),
 
       // View snapshot detail
-      KeyCode::Enter => {
-        if !self.filtered_and_sorted_snapshots().is_empty() {
-          self.view_state = ViewState::SnapshotDetail;
-          self.scroll_offset = 0;
-          self.events_selected_row = 0;
-          self.events_table_state.select(Some(0));
-        }
+      KeyCode::Enter if !self.filtered_and_sorted_snapshots().is_empty() => {
+        self.view_state = ViewState::SnapshotDetail;
+        self.scroll_offset = 0;
+        self.events_selected_row = 0;
+        self.events_table_state.select(Some(0));
       },
 
       // Search
       KeyCode::Char('/') => {
         self.view_state = ViewState::Search;
       },
-      KeyCode::Char('n') => {
-        if !self.search_query.is_empty() {
-          self.move_cursor_down(); // Simple next implementation
-        }
+      KeyCode::Char('n') if !self.search_query.is_empty() => {
+        self.move_cursor_down(); // Simple next implementation
       },
-      KeyCode::Char('N') => {
-        if !self.search_query.is_empty() {
-          self.move_cursor_up(); // Simple previous implementation
-        }
+      KeyCode::Char('N') if !self.search_query.is_empty() => {
+        self.move_cursor_up(); // Simple previous implementation
       },
 
       // Sorting

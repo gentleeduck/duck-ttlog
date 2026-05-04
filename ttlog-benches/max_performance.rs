@@ -309,10 +309,8 @@ impl ThroughputTester {
             }
 
             // Pop occasionally to maintain flow
-            if (counter % 10) == 0 {
-              if buffer.pop().is_some() {
-                local_ops += 1;
-              }
+            if counter.is_multiple_of(10) && buffer.pop().is_some() {
+              local_ops += 1;
             }
 
             if (local_ops & 0x3FFF) == 0 {
@@ -517,7 +515,7 @@ impl ConcurrencyTester {
       value: successful_buffers as f64,
       unit: "buffers".to_string(),
       duration: format!("{:.3}s", total_duration.as_secs_f64()),
-      config: format!("ops_per_buffer=100"),
+      config: "ops_per_buffer=100".to_string(),
       notes: format!(
         "Single-thread provisioning smoke test, total operations: {}",
         total_operations
@@ -644,15 +642,12 @@ impl MemoryEfficiencyTester {
 
           while Instant::now() < end && !stop_flag.load(Ordering::Acquire) {
             let event = create_minimal_event(thread_id as u64 * 1_000_000 + counter);
-            match buffer.push(event) {
-              Ok(_) => {
-                local_bytes += event_size;
-                counter += 1;
-              },
-              Err(_) => {},
+            if buffer.push(event).is_ok() {
+              local_bytes += event_size;
+              counter += 1;
             }
 
-            if (counter % 100) == 0 {
+            if counter.is_multiple_of(100) {
               let _ = buffer.pop();
             }
 
@@ -797,12 +792,11 @@ impl BufferOperationsTester {
             event_counter += 1;
 
             // Count pushes explicitly, including overwrite-mode success.
-            match buffer.push(event) {
-              Ok(_) => local_ops += 1,
-              Err(_) => {},
+            if buffer.push(event).is_ok() {
+              local_ops += 1
             }
 
-            if local_ops % 10000 == 0 {
+            if local_ops.is_multiple_of(10000) {
               thread::yield_now();
             }
           }
@@ -831,7 +825,7 @@ impl BufferOperationsTester {
               thread::yield_now();
             }
 
-            if local_ops % 10000 == 0 {
+            if local_ops.is_multiple_of(10000) {
               thread::yield_now();
             }
           }
@@ -1091,7 +1085,7 @@ impl EndToEndTester {
             // enqueue timestamp (us since t0) into position.0 for latency measurement
             let ts_us = (Instant::now().duration_since(t0).as_micros() as u64) as u32;
             let mut ev = create_minimal_event(pid as u64 * 1_000_000 + ctr);
-            ev.position = (ts_us as u32, 0);
+            ev.position = (ts_us, 0);
             match buffer.push(ev) {
               Ok(Some(_evicted)) => {
                 local_prod += 1;
@@ -1144,14 +1138,14 @@ impl EndToEndTester {
               // format and optionally write
               if let Some(w) = &writer {
                 // Batch lines locally to reduce lock/write frequency.
-                let _ = write!(
+                let _ = writeln!(
                   &mut write_batch,
-                  "{},{}:{}\n",
+                  "{},{}:{}",
                   ev.target_id, ev.file_id, ev.position.0
                 );
 
                 if write_batch.len() >= WRITE_BATCH_BYTES
-                  || (local_cons % WRITE_BATCH_EVENTS) == 0
+                  || local_cons.is_multiple_of(WRITE_BATCH_EVENTS)
                 {
                   let mut w = w.lock().unwrap();
                   if w.write_all(write_batch.as_bytes()).is_ok() {
@@ -1626,7 +1620,9 @@ impl BenchmarkSuite {
     println!("\n📋 Benchmark Notes:");
     println!("• Throughput/memory tests run with multiple trials and report mean/stddev/range");
     println!("• Throughput section now uses ttlog `send_event_fast` real ingest path");
-    println!("• Buffer and memory metrics are labeled as synthetic where they are not full pipeline");
+    println!(
+      "• Buffer and memory metrics are labeled as synthetic where they are not full pipeline"
+    );
     println!("• End-to-end results include drop counting that treats overwrite as data loss");
     println!("• File sink benchmark now fails fast if output file cannot be created");
     println!("\n✅ Statistical benchmark suite completed successfully!");
