@@ -5,9 +5,13 @@ members = [
   "ttlog-macros",
   "ttlog-benches",
   "examples/ttlog-simple",
-  "examples/ttlog-server", 
+  "examples/ttlog-filereader",
+]
+# ttlog-server + ttlog-complex are out of date with the current
+# trace/send_event_fast signature; exclude until they are refactored.
+exclude = [
+  "examples/ttlog-server",
   "examples/ttlog-complex",
-  "examples/ttlog-filereader", 
 ]
 resolver = "2"
 

@@ -1,6 +1,6 @@
 Imagine you're having a vector and now you want to mutate this vector,
 it's nothing if this single thread. but imagine we're having a mutlible thread mutation to this
-vector, we probably would use mutex here but this is good until you have alot of muatations at the
+vector, we probably would use mutex here but this is good until you have alot of mutations at the
 same  time, then it's not good at all hence it's blocking the other thread from writing until this
 operation of muration gets done, so the other muations can't be done until this one is done.
 
@@ -14,7 +14,7 @@ also the memory model
 - release
 - acquire_release
 - relaxed
-- squential_consistent
+- sequential_consistent
 
 when write to the memory the other threads are unable to see the mutaions you made till you release
 them then they will not be able to see it until they acquire it then they can see it.
