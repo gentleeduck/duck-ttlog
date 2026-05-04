@@ -83,7 +83,7 @@ chrono = { version = "0.4", features = ["serde"] }
 lz4 = "1.28"
 
 # Async and concurrency
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.50.0", features = ["full"] }
 crossbeam-channel = "0.5"
 crossbeam-epoch = "0.9.18"
 crossbeam-queue = "0.3.12"
