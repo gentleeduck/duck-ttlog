@@ -76,6 +76,10 @@ unnecessary_unwrap = "allow"
 manual_clamp = "allow"
 manual_range_contains = "allow"
 nonminimal_bool = "allow"
+overly_complex_bool_expr = "allow"
+assertions_on_constants = "allow"
+vec_init_then_push = "allow"
+format_in_format_args = "allow"
 
 [workspace.dependencies]
 # Core dependencies
