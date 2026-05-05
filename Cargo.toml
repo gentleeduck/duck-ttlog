@@ -102,7 +102,7 @@ tracing-subscriber = "0.3"
 
 # System utilities
 gethostname = "1.1.0"
-tempfile = "3.8"
+tempfile = "3.27"
 
 # Development and testing
 criterion = "0.7.0"
