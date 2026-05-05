@@ -10,6 +10,8 @@
 
 <p align="center">
   <a href="../LICENSE">MIT</a> -
+  <a href="../CHANGELOG.md">Changelog</a> -
+  <a href="../CONTRIBUTING.md">Contributing</a> -
   <a href="https://crates.io/crates/ttlog-benches">crates.io</a> -
   <a href="https://docs.rs/ttlog-benches">docs.rs</a>
 </p>
@@ -22,19 +24,28 @@
 
 ---
 
-Part of the [`ttlog`](../README.md) workspace.
-
 ## Install
 
 ```sh
 cargo add ttlog-benches
 ```
 
-## Benchmarks
+## Quick start
 
-See [`ttlog-benches`](../ttlog-benches) and the headline numbers in
-the [root README](../README.md).
+```sh
+cargo bench -p ttlog-benches
+```
+
+## Docs
+
+- [crates.io](https://crates.io/crates/ttlog-benches)
+- [docs.rs](https://docs.rs/ttlog-benches)
+- Per-crate guide in the repo: see [`../README.md`](../README.md)
+
+## Contributing
+
+See [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## License
 
-MIT. See [`LICENSE`](../LICENSE).
+MIT. See [`../LICENSE`](../LICENSE).

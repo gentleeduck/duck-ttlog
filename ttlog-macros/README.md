@@ -10,6 +10,8 @@
 
 <p align="center">
   <a href="../LICENSE">MIT</a> -
+  <a href="../CHANGELOG.md">Changelog</a> -
+  <a href="../CONTRIBUTING.md">Contributing</a> -
   <a href="https://crates.io/crates/ttlog-macros">crates.io</a> -
   <a href="https://docs.rs/ttlog-macros">docs.rs</a>
 </p>
@@ -22,19 +24,31 @@
 
 ---
 
-Part of the [`ttlog`](../README.md) workspace.
-
 ## Install
 
 ```sh
 cargo add ttlog-macros
 ```
 
-## Benchmarks
+## Quick start
 
-See [`ttlog-benches`](../ttlog-benches) and the headline numbers in
-the [root README](../README.md).
+```rust
+use ttlog_macros::trace_fn;
+
+#[trace_fn]
+fn handle(req: Request) -> Response { /* */ }
+```
+
+## Docs
+
+- [crates.io](https://crates.io/crates/ttlog-macros)
+- [docs.rs](https://docs.rs/ttlog-macros)
+- Per-crate guide in the repo: see [`../README.md`](../README.md)
+
+## Contributing
+
+See [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 ## License
 
-MIT. See [`LICENSE`](../LICENSE).
+MIT. See [`../LICENSE`](../LICENSE).

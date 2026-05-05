@@ -11,10 +11,10 @@
 
 <p align="center">
   <a href="./LICENSE">MIT</a> -
+  <a href="./CHANGELOG.md">Changelog</a> -
+  <a href="./CONTRIBUTING.md">Contributing</a> -
   <a href="https://crates.io/crates/ttlog">crates.io</a> -
-  <a href="https://docs.rs/ttlog">docs.rs</a> -
-  <a href="./ttlog-benches">benches</a> -
-  <a href="https://github.com/gentleeduck/duck-ttlog/issues">issues</a>
+  <a href="https://docs.rs/ttlog">docs.rs</a>
 </p>
 
 <p align="center">
@@ -24,17 +24,6 @@
 </p>
 
 ---
-
-## Headline
-
-| metric | value |
-| --- | ---: |
-| throughput | 318M events/sec @ 16 threads |
-| buffer ops | 15M ops/sec (producer-heavy) |
-| memory | 24 bytes per event |
-| concurrency | 256+ threads tested |
-
-Numbers from `ttlog-benches`. Re-run on your hardware before quoting.
 
 ## Install
 
@@ -58,13 +47,19 @@ allocation matters. Compressed snapshots on panic so you can replay.
 
 ## Workspace
 
-| crate | role |
+| Crate | Role |
 | --- | --- |
-| [`ttlog`](ttlog) | core logger + ring buffers |
+| [`ttlog`](ttlog) | Core logger + ring buffers |
 | [`ttlog-macros`](ttlog-macros) | `#[trace_fn]`, `log!` macros |
-| [`ttlog-view`](ttlog-view) | snapshot reader / pretty printer |
-| [`ttlog-benches`](ttlog-benches) | criterion suite |
-| [`examples/`](examples) | runnable demos: simple, server, complex, filereader |
+| [`ttlog-view`](ttlog-view) | Snapshot reader / pretty printer |
+| [`ttlog-benches`](ttlog-benches) | Criterion suite |
+
+## Examples
+
+| Path | Stack |
+| --- | --- |
+| [`examples/ttlog-simple`](examples/ttlog-simple) | Basic events, levels, crash snapshot |
+| [`examples/ttlog-filereader`](examples/ttlog-filereader) | Replay snapshot via ttlog-view |
 
 ## Build
 
@@ -74,31 +69,27 @@ cargo test  --workspace
 cargo bench -p ttlog-benches
 ```
 
-## Crash recovery
+## Docs
 
-Each thread holds a lock-free ring buffer. On panic, a SIGSEGV
-handler dumps every live buffer to a compressed snapshot. Replay
-with `ttlog-view`:
+- [crates.io](https://crates.io/crates/ttlog) -
+  [docs.rs](https://docs.rs/ttlog) -
+  [duck-ui website](https://github.com/gentleeduck/duck-ui)
 
-```sh
-ttlog-view snapshot.ttlog
-```
+## Benchmarks
 
-## Performance properties
+Numbers from `ttlog-benches`. Re-run on your hardware before quoting.
 
-- Lock-free SPSC ring per thread; lockstep across cores.
-- Thread-local string interner caps per-message allocations at zero
-  for repeated keys.
-- Compressed snapshot on panic via zstd.
-- No global mutex; no async runtime; no allocator hooks.
-
-Detailed write-up + flame graphs under [`docs/`](docs).
+| metric | value |
+| --- | ---: |
+| throughput | 318M events/sec @ 16 threads |
+| buffer ops | 15M ops/sec (producer-heavy) |
+| memory | 24 bytes per event |
+| concurrency | 256+ threads tested |
 
 ## Contributing
 
 PR checklist + style notes in [`CONTRIBUTING.md`](CONTRIBUTING.md).
-Security: [`SECURITY.md`](SECURITY.md).
-Behaviour: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+Security: [`SECURITY.md`](SECURITY.md). Behaviour: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 ## License
 
