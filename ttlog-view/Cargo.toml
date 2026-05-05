@@ -29,7 +29,7 @@ terminal_size = { workspace = true }
 tracing = { workspace = true }
 
 # Internal dependencies
-ttlog = { path = "../ttlog" }
+ttlog = { version = "0.1.21", path = "../ttlog" }
 
 # Development and testing
 criterion = { workspace = true }
