@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 description.workspace = true
+readme = "README.md"
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true
@@ -20,7 +21,7 @@ lz4 = { workspace = true }
 gethostname = { workspace = true }
 crossbeam-channel.workspace = true
 crossbeam-queue = { workspace = true }
-ttlog-macros = { path = "../ttlog-macros", version = "0.1.20" }
+ttlog-macros = { path = "../ttlog-macros", version = "0.1.21" }
 ryu = "1.0.20"
 itoa = "1.0.15"
 tracing = { workspace = true }

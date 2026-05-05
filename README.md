@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./public/logo.png" alt="ttlog" width="200"/>
+  <img src="./public/logo-dark.svg" alt="ttlog" width="120"/>
 </p>
 
 <h1 align="center">ttlog</h1>

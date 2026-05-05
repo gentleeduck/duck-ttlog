@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 description = "TTLog benchmark and performance suites (criterion + binaries)"
+readme = "README.md"
 license.workspace = true
 repository.workspace = true
 keywords.workspace = true

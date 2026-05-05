@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "ttlog"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -1575,7 +1575,7 @@ dependencies = [
 
 [[package]]
 name = "ttlog-benches"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "chrono",
  "criterion",
@@ -1598,7 +1598,7 @@ dependencies = [
 
 [[package]]
 name = "ttlog-filereader"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "lz4",
  "serde",
@@ -1609,7 +1609,7 @@ dependencies = [
 
 [[package]]
 name = "ttlog-macros"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1619,7 +1619,7 @@ dependencies = [
 
 [[package]]
 name = "ttlog-simple"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "itoa",
  "proc-macro2",
@@ -1635,7 +1635,7 @@ dependencies = [
 
 [[package]]
 name = "ttlog-view"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "chrono",
  "color-eyre",
