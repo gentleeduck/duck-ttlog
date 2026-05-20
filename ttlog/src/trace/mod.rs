@@ -12,8 +12,28 @@ use crate::listener::LogListener;
 use crate::panic_hook::PanicHook;
 use crate::snapshot::SnapshotWriter;
 use crate::string_interner::StringInterner;
-use crossbeam_channel::{unbounded, Receiver, Sender};
-use std::sync::atomic::{self, AtomicU8, Ordering};
+use crossbeam_channel::{Receiver, Sender};
+use std::sync::atomic::{self, AtomicU64, AtomicU8, Ordering};
+
+/// SEC-010: capacity of the event-broadcast channel.
+///
+/// The broadcast channel is bounded so a stalled or absent listener cannot
+/// cause unbounded memory growth on the hot logging path. When the channel is
+/// full the producer side uses `try_send` and **drops the newest event**
+/// (drop-newest policy) rather than blocking — backpressure must never reach
+/// the caller of a logging macro. Dropped events are counted in
+/// [`DROPPED_EVENTS`] for observability.
+const EVENT_BROADCAST_CAPACITY: usize = 8192;
+
+/// SEC-010: total number of broadcast events dropped because the bounded
+/// channel was full (drop-newest policy). Monotonic, process-wide.
+pub static DROPPED_EVENTS: AtomicU64 = AtomicU64::new(0);
+
+/// Returns the number of broadcast events dropped so far due to a full
+/// channel (see [`EVENT_BROADCAST_CAPACITY`]).
+pub fn dropped_events() -> u64 {
+  DROPPED_EVENTS.load(Ordering::Relaxed)
+}
 
 #[derive(Debug)]
 pub enum Message {
@@ -49,7 +69,8 @@ pub struct Trace {
   pub snapshot_buffer: Arc<LockFreeRingBuffer<LogEvent>>,
   /// Channel sender for communicating with the writer thread
   pub sender: Sender<Message>,
-  /// Direct event broadcasting channel - unbounded to ensure no events are lost
+  /// Direct event broadcasting channel — bounded (SEC-010). On a full channel
+  /// the newest event is dropped (see [`EVENT_BROADCAST_CAPACITY`]).
   pub event_broadcast_sender: Sender<EventBroadcast>,
   /// Atomic log level for runtime filtering
   pub level: atomic::AtomicU8,
@@ -155,8 +176,11 @@ impl Trace {
     let (sender, receiver) = crossbeam_channel::bounded::<Message>(channel_capacity);
     let (listener_sender, listener_receiver) = crossbeam_channel::bounded::<ListenerMessage>(16);
 
-    // Use unbounded channel for event broadcasting to ensure no events are lost
-    let (event_broadcast_sender, event_broadcast_receiver) = unbounded::<EventBroadcast>();
+    // SEC-010: bounded broadcast channel. A stalled listener can no longer
+    // grow this queue without limit; once full, producers drop the newest
+    // event via `try_send` instead of blocking the logging hot path.
+    let (event_broadcast_sender, event_broadcast_receiver) =
+      crossbeam_channel::bounded::<EventBroadcast>(EVENT_BROADCAST_CAPACITY);
 
     let interner = Arc::new(StringInterner::new());
 
@@ -324,16 +348,18 @@ impl Trace {
     // Add to snapshot buffer for periodic snapshots
     self.snapshot_buffer.push_overwrite(event.clone());
 
-    // Broadcast to all listeners immediately - no buffering, no limits
-    // Using unbounded channel ensures no events are lost
+    // SEC-010: broadcast over the BOUNDED channel with `try_send` — a
+    // drop-newest policy. If the channel is full (a stalled/slow listener)
+    // the event is dropped instead of blocking the critical logging path,
+    // and the drop is counted for observability. This guarantees a stalled
+    // listener can never apply backpressure to the caller or grow memory
+    // without bound.
     if self
       .event_broadcast_sender
       .try_send(EventBroadcast { event })
       .is_err()
     {
-      // If the channel is somehow full or closed, we could optionally log this
-      // but we don't want to block the critical logging path
-      eprintln!("[Trace] Warning: Failed to broadcast event to listeners");
+      DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
     }
   }
 
