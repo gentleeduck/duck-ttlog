@@ -117,11 +117,22 @@ impl LogListener for StdoutListener {
 /// `\x1b[2J\x1b[H`) could clear the operator's terminal or forge log lines.
 /// We drop every control code point below `0x20` (except `\t`) and `\x7f`
 /// (DEL); normal printable Unicode is left intact.
+///
+/// We additionally drop the C1 control range `U+0080..=U+009F` — some
+/// terminals in 8-bit mode treat these as escape introducers (`U+009B` CSI,
+/// `U+009D` OSC) — and the Unicode line/paragraph separators `U+2028` /
+/// `U+2029`, which separator-aware log viewers may render as new lines and
+/// so allow forged log entries (SEC-019).
 fn sanitize_for_terminal(s: &str) -> String {
   s.chars()
     .filter(|c| {
       let cp = *c as u32;
-      *c == '\t' || (cp >= 0x20 && cp != 0x7f)
+      *c == '\t'
+        || (cp >= 0x20
+          && cp != 0x7f
+          && !(0x80..=0x9f).contains(&cp)
+          && *c != '\u{2028}'
+          && *c != '\u{2029}')
     })
     .collect()
 }
@@ -154,6 +165,29 @@ mod tests {
     );
     // The printable remainder survives intact.
     assert!(cleaned.contains("fake [INFO] root: admin login"));
+  }
+
+  #[test]
+  fn strips_c1_controls_and_unicode_separators() {
+    // NEL (U+0085), CSI (U+009B) are C1 controls; U+2028 is a line separator.
+    let malicious = "before\u{0085}mid\u{009b}2Jafter\u{2028}forged [INFO] root";
+    let cleaned = sanitize_for_terminal(malicious);
+    assert!(
+      !cleaned.contains('\u{0085}'),
+      "NEL must be stripped: {:?}",
+      cleaned
+    );
+    assert!(
+      !cleaned.contains('\u{009b}'),
+      "CSI must be stripped: {:?}",
+      cleaned
+    );
+    assert!(
+      !cleaned.contains('\u{2028}'),
+      "line separator must be stripped: {:?}",
+      cleaned
+    );
+    assert_eq!(cleaned, "beforemid2Jafterforged [INFO] root");
   }
 
   #[test]
