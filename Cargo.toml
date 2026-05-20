@@ -111,7 +111,7 @@ tabled = "0.20"
 # UI and display
 colored = "3.0.0"
 figlet-rs = "0.1.5"
-inquire = "0.9.1"
+inquire = "0.9.4"
 regex = "1.11.1"
 terminal_size = "0.4.3"
 
