@@ -77,6 +77,12 @@ impl LogListener for StdoutListener {
         DateTime::from_timestamp((ts_ms / 1000) as i64, ((ts_ms % 1000) * 1_000_000) as u32)
           .unwrap_or_else(|| Utc.timestamp_opt(0, 0).unwrap());
 
+      // Strip terminal control characters from every attacker-influenced
+      // field so a crafted log payload cannot inject ANSI escapes (SEC-004).
+      let target = sanitize_for_terminal(&target);
+      let message = sanitize_for_terminal(&message);
+      let kv = sanitize_for_terminal(&kv);
+
       let level_colored = color_level(level.as_str());
       let target_colored = format!("{}{}{}", MAGENTA, target, RESET);
       let msg_colored = format!("{}{}{}", WHITE, message, RESET);
@@ -104,6 +110,22 @@ impl LogListener for StdoutListener {
   }
 }
 
+/// Strips terminal control characters from untrusted log data before it is
+/// written to stdout interleaved with the listener's own ANSI color codes.
+///
+/// An attacker-supplied log message containing escape sequences (e.g.
+/// `\x1b[2J\x1b[H`) could clear the operator's terminal or forge log lines.
+/// We drop every control code point below `0x20` (except `\t`) and `\x7f`
+/// (DEL); normal printable Unicode is left intact.
+fn sanitize_for_terminal(s: &str) -> String {
+  s.chars()
+    .filter(|c| {
+      let cp = *c as u32;
+      *c == '\t' || (cp >= 0x20 && cp != 0x7f)
+    })
+    .collect()
+}
+
 fn color_level(level: &str) -> String {
   match level {
     "ERROR" => format!("{}[{}]{}", RED, level, RESET),
@@ -113,5 +135,31 @@ fn color_level(level: &str) -> String {
     "TRACE" => format!("{}[{}]{}", CYAN, level, RESET),
     "FATAL" => format!("{}[{}]{}", RED, level, RESET),
     _ => level.to_string(),
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::sanitize_for_terminal;
+
+  #[test]
+  fn strips_ansi_escape_injection() {
+    // A crafted log message that clears the screen and forges a log line.
+    let malicious = "\x1b[2J\x1b[Hfake [INFO] root: admin login";
+    let cleaned = sanitize_for_terminal(malicious);
+    assert!(
+      !cleaned.contains('\x1b'),
+      "sanitized output must not contain ESC: {:?}",
+      cleaned
+    );
+    // The printable remainder survives intact.
+    assert!(cleaned.contains("fake [INFO] root: admin login"));
+  }
+
+  #[test]
+  fn keeps_tab_and_printable_unicode_drops_other_controls() {
+    let input = "col1\tcol2\nnext\r\u{7f}\u{0}emoji-😀";
+    let cleaned = sanitize_for_terminal(input);
+    assert_eq!(cleaned, "col1\tcol2nextemoji-😀");
   }
 }
