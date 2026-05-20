@@ -104,22 +104,21 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
             if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
               let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
               {
-                use serde::ser::{SerializeMap, Serializer};
-                // A failing `Serialize` impl on a user value must never panic
-                // the caller; on error we drop the kv payload silently.
-                let kv_result: Result<(), serde_json::Error> = (|| {
-                  let mut ser = serde_json::Serializer::new(&mut buf);
-                  let mut map = ser.serialize_map(Some(NUM_VALUES))?;
-                  #({
-                    let wrapper = ttlog::kv::IntOrSer(&#kv_values);
-                    map.serialize_entry(stringify!(#kv_keys), &wrapper)?;
-                  })*
-                  map.end()?;
-                  Ok(())
-                })();
-                if kv_result.is_err() {
-                  buf.0.clear();
-                }
+                use std::io::Write;
+                // SEC-022: serialize each field independently so a single
+                // failing `Serialize` impl drops ONLY that field — every
+                // other kv pair survives. The bad field gets a placeholder.
+                let mut __kv_map = serde_json::Map::with_capacity(NUM_VALUES);
+                #({
+                  let __kv_val = serde_json::to_value(
+                    ttlog::kv::IntOrSer(&#kv_values)
+                  ).unwrap_or_else(|_| {
+                    serde_json::Value::String("<serialize-error>".to_string())
+                  });
+                  __kv_map.insert(stringify!(#kv_keys).to_string(), __kv_val);
+                })*
+                let _ = serde_json::to_writer(&mut buf, &__kv_map)
+                  .or_else(|_| buf.write_all(b"{}"));
               }
 
               let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
@@ -159,22 +158,21 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
             if LEVEL >= logger.level.load(std::sync::atomic::Ordering::Relaxed) {
               let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
               {
-                use serde::ser::{SerializeMap, Serializer};
-                // A failing `Serialize` impl on a user value must never panic
-                // the caller; on error we drop the kv payload silently.
-                let kv_result: Result<(), serde_json::Error> = (|| {
-                  let mut ser = serde_json::Serializer::new(&mut buf);
-                  let mut map = ser.serialize_map(Some(NUM_VALUES))?;
-                  #({
-                    let wrapper = ttlog::kv::IntOrSer(&#kv_values);
-                    map.serialize_entry(stringify!(#kv_keys), &wrapper)?;
-                  })*
-                  map.end()?;
-                  Ok(())
-                })();
-                if kv_result.is_err() {
-                  buf.0.clear();
-                }
+                use std::io::Write;
+                // SEC-022: serialize each field independently so a single
+                // failing `Serialize` impl drops ONLY that field — every
+                // other kv pair survives. The bad field gets a placeholder.
+                let mut __kv_map = serde_json::Map::with_capacity(NUM_VALUES);
+                #({
+                  let __kv_val = serde_json::to_value(
+                    ttlog::kv::IntOrSer(&#kv_values)
+                  ).unwrap_or_else(|_| {
+                    serde_json::Value::String("<serialize-error>".to_string())
+                  });
+                  __kv_map.insert(stringify!(#kv_keys).to_string(), __kv_val);
+                })*
+                let _ = serde_json::to_writer(&mut buf, &__kv_map)
+                  .or_else(|_| buf.write_all(b"{}"));
               }
 
               let kv_id = logger.interner.intern_kv(buf.into_inner());
