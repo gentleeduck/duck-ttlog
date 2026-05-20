@@ -2,11 +2,11 @@
 //
 // Utility to read and display the contents of ttlog snapshot files
 
-use lz4::block::decompress;
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs::File;
 use std::io::Read;
+use ttlog::snapshot::decompress::bounded_lz4_decompress;
 
 // Copy of the snapshot structure from your lib
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -37,8 +37,9 @@ fn read_snapshot_file(file_path: &str) -> Result<Snapshot, Box<dyn std::error::E
 
   println!("Compressed file size: {} bytes", compressed_data.len());
 
-  // Decompress with LZ4
-  let decompressed = decompress(&compressed_data, None)?;
+  // Decompress with LZ4. The snapshot file is attacker-influenced input, so
+  // use the bounded helper to reject decompression bombs before allocating.
+  let decompressed = bounded_lz4_decompress(&compressed_data)?;
   println!("Decompressed size: {} bytes", decompressed.len());
 
   // Deserialize from CBOR
@@ -226,6 +227,17 @@ pub fn read_latest_snapshot() -> Result<Snapshot, Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn test_oversized_lz4_claim_is_rejected() {
+    // A crafted .bin whose lz4 size prefix claims ~4 GiB must be rejected
+    // before any allocation, defeating the decompression bomb (SEC-016).
+    let mut payload = u32::MAX.to_le_bytes().to_vec();
+    payload.extend_from_slice(&[0u8; 16]);
+    let res = bounded_lz4_decompress(&payload);
+    assert!(res.is_err(), "oversized decompressed claim must error");
+    assert!(res.unwrap_err().to_string().contains("exceeds limit"));
+  }
 
   #[test]
   fn test_can_list_snapshot_files() {

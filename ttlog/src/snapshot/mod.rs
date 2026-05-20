@@ -1,10 +1,13 @@
 mod __test__;
+pub mod decompress;
+
+pub use decompress::{bounded_lz4_decompress, MAX_DECOMPRESSED_SIZE};
 
 use chrono::Utc;
 use lz4::block::{compress, CompressionMode};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
-use std::fs::{self, File};
+use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
@@ -67,6 +70,9 @@ impl ResolvedEvent {
 pub struct SnapshotWriter {
   service: Cow<'static, str>,
   storage_path: Cow<'static, str>,
+  /// When `false` (the default), the machine hostname is omitted from
+  /// snapshots so shared CI / multi-tenant hosts do not leak metadata.
+  include_hostname: bool,
 }
 
 impl SnapshotWriter {
@@ -78,7 +84,16 @@ impl SnapshotWriter {
     Self {
       service: Cow::Owned(service.into()),
       storage_path: Cow::Owned(storage_path.into()),
+      include_hostname: false,
     }
+  }
+
+  /// Opts in to embedding the machine hostname in written snapshots.
+  ///
+  /// Off by default to avoid leaking host metadata on shared infrastructure.
+  pub fn with_hostname(mut self, include_hostname: bool) -> Self {
+    self.include_hostname = include_hostname;
+    self
   }
 
   pub fn create_snapshot(
@@ -149,7 +164,12 @@ impl SnapshotWriter {
       return None;
     }
 
-    let hostname = gethostname::gethostname().to_string_lossy().into_owned();
+    // Hostname is opt-in: shared/multi-tenant hosts should not leak it.
+    let hostname = if self.include_hostname {
+      gethostname::gethostname().to_string_lossy().into_owned()
+    } else {
+      String::new()
+    };
     let pid = std::process::id();
     let created_at = Utc::now().format("%Y%m%d%H%M%S").to_string();
 
@@ -189,7 +209,16 @@ impl SnapshotWriter {
     std::fs::create_dir_all(&path)?;
 
     {
-      let mut f = File::create(&filename)?;
+      // Snapshots may contain sensitive log data; restrict to owner-only
+      // permissions on Unix so they are not world-readable.
+      let mut opts = std::fs::OpenOptions::new();
+      opts.write(true).create(true).truncate(true);
+      #[cfg(unix)]
+      {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+      }
+      let mut f = opts.open(&filename)?;
       f.write_all(&compressed)?;
       f.sync_all()?;
     }
