@@ -123,6 +123,13 @@ impl LogListener for StdoutListener {
 /// `U+009D` OSC) — and the Unicode line/paragraph separators `U+2028` /
 /// `U+2029`, which separator-aware log viewers may render as new lines and
 /// so allow forged log entries (SEC-019).
+///
+/// We further drop Unicode bidirectional formatting characters — the
+/// overrides/embeddings `U+202A..=U+202E` and the isolates `U+2066..=U+2069`
+/// — and the byte-order mark `U+FEFF` (SEC-023). BIDI controls let an
+/// attacker visually reorder a log line so the rendered text differs from the
+/// logical bytes (log-line spoofing in BIDI-aware viewers); the BOM can be
+/// abused as an invisible zero-width character.
 fn sanitize_for_terminal(s: &str) -> String {
   s.chars()
     .filter(|c| {
@@ -132,7 +139,10 @@ fn sanitize_for_terminal(s: &str) -> String {
           && cp != 0x7f
           && !(0x80..=0x9f).contains(&cp)
           && *c != '\u{2028}'
-          && *c != '\u{2029}')
+          && *c != '\u{2029}'
+          && !('\u{202A}'..='\u{202E}').contains(c)
+          && !('\u{2066}'..='\u{2069}').contains(c)
+          && *c != '\u{FEFF}')
     })
     .collect()
 }
@@ -188,6 +198,37 @@ mod tests {
       cleaned
     );
     assert_eq!(cleaned, "beforemid2Jafterforged [INFO] root");
+  }
+
+  #[test]
+  fn strips_bidi_overrides_and_bom() {
+    // SEC-023: U+202E (RTL override) can visually reverse text; U+2066/2069
+    // are isolates; U+FEFF is the BOM (invisible zero-width). A crafted log
+    // payload uses these to spoof what the operator sees.
+    let malicious =
+      "user\u{202E}drowssap\u{202C} \u{2066}isolated\u{2069}\u{FEFF}admin login";
+    let cleaned = sanitize_for_terminal(malicious);
+    assert!(
+      !cleaned.contains('\u{202E}'),
+      "RTL override must be stripped: {:?}",
+      cleaned
+    );
+    assert!(
+      !cleaned.contains('\u{202C}'),
+      "pop-directional-formatting must be stripped: {:?}",
+      cleaned
+    );
+    assert!(
+      !cleaned.contains('\u{2066}') && !cleaned.contains('\u{2069}'),
+      "BIDI isolates must be stripped: {:?}",
+      cleaned
+    );
+    assert!(
+      !cleaned.contains('\u{FEFF}'),
+      "BOM must be stripped: {:?}",
+      cleaned
+    );
+    assert_eq!(cleaned, "userdrowssap isolatedadmin login");
   }
 
   #[test]
