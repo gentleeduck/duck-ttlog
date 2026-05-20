@@ -208,4 +208,82 @@ mod __test__ {
     assert_eq!(snapshot.events[0].timestamp_millis(), 0);
     assert_eq!(snapshot.events[499].timestamp_millis(), 499);
   }
+
+  #[test]
+  fn test_sanitize_reason_strips_path_traversal() {
+    let s = crate::snapshot::sanitize_reason("../etc/passwd");
+    assert!(!s.contains('/'));
+    assert!(!s.contains('.'));
+    assert_eq!(s, "etcpasswd");
+  }
+
+  #[test]
+  fn test_sanitize_reason_strips_nul() {
+    let s = crate::snapshot::sanitize_reason("foo\0bar");
+    assert!(!s.contains('\0'));
+    assert_eq!(s, "foobar");
+  }
+
+  #[test]
+  fn test_sanitize_reason_drops_dots_and_slashes() {
+    let s = crate::snapshot::sanitize_reason("foo/../bar");
+    assert_eq!(s, "foobar");
+    assert!(s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+  }
+
+  #[test]
+  fn test_sanitize_reason_empty_becomes_unknown() {
+    assert_eq!(crate::snapshot::sanitize_reason(""), "unknown");
+    assert_eq!(crate::snapshot::sanitize_reason("////"), "unknown");
+    assert_eq!(crate::snapshot::sanitize_reason("...."), "unknown");
+  }
+
+  #[test]
+  fn test_sanitize_reason_truncates_to_64() {
+    let long = "a".repeat(200);
+    let s = crate::snapshot::sanitize_reason(&long);
+    assert_eq!(s.len(), 64);
+  }
+
+  #[test]
+  fn test_write_snapshot_keeps_file_inside_storage_path() {
+    use std::path::PathBuf;
+
+    let tmp = std::env::temp_dir().join(format!(
+      "ttlog_sec003_{}_{}",
+      std::process::id(),
+      chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let (mut ring, interner, builder) = builder_with_ring(8);
+    let event = builder.build_fast(0, LogLevel::INFO, "test_target", "msg");
+    ring.push(event).unwrap();
+
+    let writer =
+      SnapshotWriter::with_storage_path("svc", tmp.to_string_lossy().into_owned());
+    let mut snap = writer
+      .create_snapshot(&mut ring, "../../etc/passwd\0evil", interner)
+      .unwrap();
+    // Force a malicious reason on the snapshot regardless of caller intent.
+    snap.reason = "../../etc/passwd\0evil".to_string();
+    writer.write_snapshot(&snap).unwrap();
+
+    // Walk tmp and assert exactly one .bin file produced, sitting *inside* tmp.
+    let entries: Vec<PathBuf> = std::fs::read_dir(&tmp)
+      .unwrap()
+      .filter_map(|e| e.ok().map(|e| e.path()))
+      .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+      .collect();
+    assert_eq!(entries.len(), 1, "expected one .bin under storage path");
+    let produced = &entries[0];
+    assert!(produced.starts_with(&tmp), "file escaped storage_path");
+    let name = produced.file_name().unwrap().to_string_lossy();
+    assert!(!name.contains(".."));
+    assert!(!name.contains('/'));
+    assert!(!name.contains('\0'));
+
+    // cleanup
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
 }
