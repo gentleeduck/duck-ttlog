@@ -1,11 +1,21 @@
 mod __test__;
 
+use smallvec::SmallVec;
 use std::{
   cell::UnsafeCell,
   collections::HashMap,
   sync::atomic::{AtomicU16, Ordering},
   sync::{Arc, RwLock},
 };
+
+/// SEC-009: the lookup maps key on a 64-bit FNV hash. FNV is not
+/// collision-resistant, so an attacker-influenced string can be crafted to
+/// collide with an already-interned one. Each hash bucket therefore holds a
+/// *list* of candidate ids; the slow path verifies `storage[id] == input`
+/// before reusing an id and falls through to insert a fresh entry on a true
+/// collision. This makes the interner collision-safe at the cost of a short
+/// linear scan over the (normally length-1) bucket.
+type IdBucket = SmallVec<[u16; 2]>;
 
 #[derive(Debug)]
 struct LocalCache {
@@ -101,10 +111,10 @@ pub struct StringInterner {
   files: RwLock<Vec<Arc<str>>>,
   kvs: RwLock<Vec<Arc<smallvec::SmallVec<[u8; 128]>>>>,
 
-  target_lookup: RwLock<HashMap<u64, u16>>,
-  message_lookup: RwLock<HashMap<u64, u16>>,
-  file_lookup: RwLock<HashMap<u64, u16>>,
-  kv_lookup: RwLock<HashMap<u64, u16>>,
+  target_lookup: RwLock<HashMap<u64, IdBucket>>,
+  message_lookup: RwLock<HashMap<u64, IdBucket>>,
+  file_lookup: RwLock<HashMap<u64, IdBucket>>,
+  kv_lookup: RwLock<HashMap<u64, IdBucket>>,
 
   target_count: AtomicU16,
   message_count: AtomicU16,
@@ -148,12 +158,16 @@ impl StringInterner {
   pub fn intern_target(&self, string: &str) -> u16 {
     let hash = self.fast_hash(string);
 
-    // Fast path: check thread-local cache first
+    // Fast path: check thread-local cache first. SEC-009: the cache is also
+    // keyed on the FNV hash, so a cache hit is verified against storage to
+    // reject collisions before it is trusted.
     LOCAL_CACHE.with(|cache| {
       let cache_ptr = cache.get();
       unsafe {
         if let Some(id) = (*cache_ptr).get_target(hash) {
-          return id;
+          if self.matches_target(id, string) {
+            return id;
+          }
         }
       }
 
@@ -181,7 +195,9 @@ impl StringInterner {
       let cache_ptr = cache.get();
       unsafe {
         if let Some(id) = (*cache_ptr).get_message(hash) {
-          return id;
+          if self.matches_message(id, string) {
+            return id;
+          }
         }
       }
 
@@ -208,7 +224,9 @@ impl StringInterner {
       let cache_ptr = cache.get();
       unsafe {
         if let Some(id) = (*cache_ptr).get_file(hash) {
-          return id;
+          if self.matches_file(id, string) {
+            return id;
+          }
         }
       }
 
@@ -230,7 +248,9 @@ impl StringInterner {
       let cache_ptr = cache.get();
       unsafe {
         if let Some(id) = (*cache_ptr).get_kv(hash) {
-          return id;
+          if self.matches_kv(id, &buf) {
+            return id;
+          }
         }
       }
 
@@ -249,27 +269,43 @@ impl StringInterner {
     &self,
     string: smallvec::SmallVec<[u8; 128]>,
     storage: &RwLock<Vec<Arc<smallvec::SmallVec<[u8; 128]>>>>,
-    lookup: &RwLock<HashMap<u64, u16>>,
+    lookup: &RwLock<HashMap<u64, IdBucket>>,
     counter: &AtomicU16,
   ) -> u16 {
     let hash = self.fast_hash_smallvec(&string);
 
-    // Try read lock first - allows concurrent reads
+    // Try read lock first - allows concurrent reads. SEC-009: a hash hit is
+    // only a *candidate* — verify the stored bytes actually equal `string`
+    // before reusing the id, otherwise a colliding payload would alias.
     if let Ok(lookup_guard) = lookup.read() {
-      if let Some(&id) = lookup_guard.get(&hash) {
-        return id;
+      if let Some(bucket) = lookup_guard.get(&hash) {
+        let storage_guard = storage.read().unwrap();
+        for &id in bucket {
+          if let Some(existing) = storage_guard.get(id as usize) {
+            if existing.as_slice() == string.as_slice() {
+              return id;
+            }
+          }
+        }
       }
     }
 
     // Need write lock for insertion
     let mut lookup_guard = lookup.write().unwrap();
+    let mut storage_guard = storage.write().unwrap();
 
-    // Double-check after acquiring write lock (race condition protection)
-    if let Some(&id) = lookup_guard.get(&hash) {
-      return id;
+    // Double-check after acquiring write lock (race condition protection),
+    // again verifying the actual bytes to reject FNV collisions.
+    if let Some(bucket) = lookup_guard.get(&hash) {
+      for &id in bucket {
+        if let Some(existing) = storage_guard.get(id as usize) {
+          if existing.as_slice() == string.as_slice() {
+            return id;
+          }
+        }
+      }
     }
 
-    let mut storage_guard = storage.write().unwrap();
     let id = storage_guard.len() as u16;
 
     // Handle overflow case (extremely rare)
@@ -277,9 +313,10 @@ impl StringInterner {
       return 0;
     }
 
-    // Insert new string
+    // Insert new string. The bucket holds every id that shares this hash so a
+    // genuine collision keeps a distinct id rather than overwriting.
     storage_guard.push(Arc::from(string));
-    lookup_guard.insert(hash, id);
+    lookup_guard.entry(hash).or_default().push(id);
     counter.store(id + 1, Ordering::Relaxed);
 
     id
@@ -290,27 +327,43 @@ impl StringInterner {
     &self,
     string: &str,
     storage: &RwLock<Vec<Arc<str>>>,
-    lookup: &RwLock<HashMap<u64, u16>>,
+    lookup: &RwLock<HashMap<u64, IdBucket>>,
     counter: &AtomicU16,
   ) -> u16 {
     let hash = self.fast_hash(string);
 
-    // Try read lock first - allows concurrent reads
+    // Try read lock first - allows concurrent reads. SEC-009: a hash hit is
+    // only a *candidate* — verify the stored string actually equals `string`
+    // before reusing the id, otherwise a colliding input would alias.
     if let Ok(lookup_guard) = lookup.read() {
-      if let Some(&id) = lookup_guard.get(&hash) {
-        return id;
+      if let Some(bucket) = lookup_guard.get(&hash) {
+        let storage_guard = storage.read().unwrap();
+        for &id in bucket {
+          if let Some(existing) = storage_guard.get(id as usize) {
+            if existing.as_ref() == string {
+              return id;
+            }
+          }
+        }
       }
     }
 
     // Need write lock for insertion
     let mut lookup_guard = lookup.write().unwrap();
+    let mut storage_guard = storage.write().unwrap();
 
-    // Double-check after acquiring write lock (race condition protection)
-    if let Some(&id) = lookup_guard.get(&hash) {
-      return id;
+    // Double-check after acquiring write lock (race condition protection),
+    // again verifying the actual string to reject FNV collisions.
+    if let Some(bucket) = lookup_guard.get(&hash) {
+      for &id in bucket {
+        if let Some(existing) = storage_guard.get(id as usize) {
+          if existing.as_ref() == string {
+            return id;
+          }
+        }
+      }
     }
 
-    let mut storage_guard = storage.write().unwrap();
     let id = storage_guard.len() as u16;
 
     // Handle overflow case (extremely rare)
@@ -318,12 +371,55 @@ impl StringInterner {
       return 0;
     }
 
-    // Insert new string
+    // Insert new string. The bucket holds every id that shares this hash so a
+    // genuine collision keeps a distinct id rather than overwriting.
     storage_guard.push(Arc::from(string));
-    lookup_guard.insert(hash, id);
+    lookup_guard.entry(hash).or_default().push(id);
     counter.store(id + 1, Ordering::Relaxed);
 
     id
+  }
+
+  /// SEC-009 collision guards: confirm the id resolved from a hash lookup
+  /// actually stores the queried value before it is trusted.
+  #[inline]
+  fn matches_target(&self, id: u16, string: &str) -> bool {
+    self
+      .targets
+      .read()
+      .unwrap()
+      .get(id as usize)
+      .is_some_and(|s| s.as_ref() == string)
+  }
+
+  #[inline]
+  fn matches_message(&self, id: u16, string: &str) -> bool {
+    self
+      .messages
+      .read()
+      .unwrap()
+      .get(id as usize)
+      .is_some_and(|s| s.as_ref() == string)
+  }
+
+  #[inline]
+  fn matches_file(&self, id: u16, string: &str) -> bool {
+    self
+      .files
+      .read()
+      .unwrap()
+      .get(id as usize)
+      .is_some_and(|s| s.as_ref() == string)
+  }
+
+  #[inline]
+  fn matches_kv(&self, id: u16, buf: &smallvec::SmallVec<[u8; 128]>) -> bool {
+    self
+      .kvs
+      .read()
+      .unwrap()
+      .get(id as usize)
+      .is_some_and(|s| s.as_slice() == buf.as_slice())
   }
 
   pub fn get_file(&self, id: u16) -> Option<Arc<str>> {
@@ -420,5 +516,57 @@ impl StringInterner {
 impl Default for StringInterner {
   fn default() -> Self {
     Self::new()
+  }
+}
+
+#[cfg(test)]
+impl StringInterner {
+  /// Test-only: expose the FNV hash so collision tests can search for, or
+  /// assert on, hash equality without depending on private internals.
+  pub(crate) fn hash_str(&self, s: &str) -> u64 {
+    self.fast_hash(s)
+  }
+
+  /// Test-only: directly seed a collision into the target lookup — interns
+  /// `victim` normally, then forces `attacker` to share the *same* hash
+  /// bucket, simulating an FNV collision. Returns `(victim_id, attacker_id)`.
+  /// The interner must still hand back distinct ids and resolve each id to
+  /// its own string.
+  pub(crate) fn intern_target_colliding(&self, victim: &str, attacker: &str) -> (u16, u16) {
+    // Intern `victim` normally first.
+    self.intern_string_slow(
+      victim,
+      &self.targets,
+      &self.target_lookup,
+      &self.target_count,
+    );
+
+    // Force the collision: register `attacker` under `victim`'s hash bucket.
+    let victim_hash = self.fast_hash(victim);
+    {
+      let mut lookup = self.target_lookup.write().unwrap();
+      let mut storage = self.targets.write().unwrap();
+      let attacker_id = storage.len() as u16;
+      storage.push(Arc::from(attacker));
+      lookup.entry(victim_hash).or_default().push(attacker_id);
+      self.target_count.store(attacker_id + 1, Ordering::Relaxed);
+    }
+
+    // Look both up again *through the public hash path*: the bucket now holds
+    // two ids under one hash, so the verify-against-storage logic must pick
+    // the right one for each input.
+    let resolved_victim = self.intern_string_slow(
+      victim,
+      &self.targets,
+      &self.target_lookup,
+      &self.target_count,
+    );
+    let resolved_attacker = self.intern_string_slow(
+      attacker,
+      &self.targets,
+      &self.target_lookup,
+      &self.target_count,
+    );
+    (resolved_victim, resolved_attacker)
   }
 }
