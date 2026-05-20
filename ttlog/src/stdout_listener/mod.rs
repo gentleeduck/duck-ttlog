@@ -205,8 +205,7 @@ mod tests {
     // SEC-023: U+202E (RTL override) can visually reverse text; U+2066/2069
     // are isolates; U+FEFF is the BOM (invisible zero-width). A crafted log
     // payload uses these to spoof what the operator sees.
-    let malicious =
-      "user\u{202E}drowssap\u{202C} \u{2066}isolated\u{2069}\u{FEFF}admin login";
+    let malicious = "user\u{202E}drowssap\u{202C} \u{2066}isolated\u{2069}\u{FEFF}admin login";
     let cleaned = sanitize_for_terminal(malicious);
     assert!(
       !cleaned.contains('\u{202E}'),
