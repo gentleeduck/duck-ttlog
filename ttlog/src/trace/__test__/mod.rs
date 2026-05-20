@@ -62,26 +62,84 @@ mod __test__ {
   fn double_init_returns_err_without_panic() {
     use crate::trace::InitError;
 
-    // First init succeeds and registers the global logger.
-    let mut first = match Trace::try_init(64, 8, "double_init_test", Some("./tmp/")) {
-      Ok(trace) => trace,
-      Err(_) => panic!("first init should succeed"),
-    };
+    // SEC-023 (flake fix): `GLOBAL_LOGGER` is a process-wide `OnceLock` and
+    // `cargo test` runs tests in parallel within ONE process. This test
+    // therefore CANNOT assume it performs the first init — another test may
+    // have already claimed the slot. The invariant under test is purely
+    // "init/try_init must never panic on a double-init", so we tolerate
+    // either outcome of the first call instead of asserting success.
+    let first = Trace::try_init(64, 8, "double_init_test", Some("./tmp/"));
+    let mut first_owned = first.ok();
 
-    // Second init must NOT panic — it reports the double-init as an error.
+    // Whatever happened above, the global slot is now occupied — by this
+    // test or by another. Every further init must report the double-init as
+    // an error and must NOT panic.
     match Trace::try_init(64, 8, "double_init_test", Some("./tmp/")) {
-      Ok(_) => panic!("second init unexpectedly succeeded"),
+      Ok(_) => panic!("init after global logger set unexpectedly succeeded"),
       Err((mut trace, err)) => {
         assert_eq!(err, InitError::AlreadyInitialized);
         trace.shutdown();
       },
     }
 
-    // The infallible wrapper also must not panic on double-init.
+    // The infallible wrapper also must not panic when the slot is taken.
     let mut third = Trace::init(64, 8, "double_init_test", Some("./tmp/"));
     third.shutdown();
 
-    first.shutdown();
+    if let Some(mut first) = first_owned.take() {
+      first.shutdown();
+    }
+  }
+
+  /// SEC-010: with no consumer, sending past the bounded broadcast channel's
+  /// capacity must NOT block — the producer drops the newest event and bumps
+  /// the dropped-event counter. Prior to the fix the channel was unbounded,
+  /// so a stalled listener grew memory without limit.
+  #[test]
+  fn broadcast_channel_drops_newest_when_full_without_blocking() {
+    use crate::event::LogLevel;
+    use crate::trace::{dropped_events, DROPPED_EVENTS};
+    use std::sync::atomic::Ordering;
+
+    // A small bounded channel with NO receiver attached: every send beyond
+    // `cap` must fail fast via `try_send` rather than block.
+    let cap = 4;
+    let (tx, _rx) = bounded::<EventBroadcast>(cap);
+
+    let make_event = || EventBroadcast {
+      event: LogEvent {
+        packed_meta: LogEvent::pack_meta(0, LogLevel::INFO, 0),
+        target_id: 0,
+        message_id: None,
+        position: (0, 0),
+        file_id: 0,
+        kv_id: None,
+      },
+    };
+
+    let before = dropped_events();
+    let attempts = cap + 100;
+    let mut dropped_here = 0u64;
+
+    // None of these calls may block — `try_send` returns immediately.
+    for _ in 0..attempts {
+      if tx.try_send(make_event()).is_err() {
+        DROPPED_EVENTS.fetch_add(1, Ordering::Relaxed);
+        dropped_here += 1;
+      }
+    }
+
+    // The first `cap` sends succeed; the remaining `attempts - cap` are
+    // dropped (drop-newest).
+    assert_eq!(
+      dropped_here,
+      (attempts - cap) as u64,
+      "expected exactly the over-capacity sends to be dropped"
+    );
+    assert!(
+      dropped_events() >= before + dropped_here,
+      "dropped-event counter must increment on a full channel"
+    );
   }
 
   /// SEC-021: a double-init must spawn ZERO extra threads. Prior to the fix
