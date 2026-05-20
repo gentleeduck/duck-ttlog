@@ -228,7 +228,9 @@ mod __test__ {
   fn test_sanitize_reason_drops_dots_and_slashes() {
     let s = crate::snapshot::sanitize_reason("foo/../bar");
     assert_eq!(s, "foobar");
-    assert!(s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
+    assert!(s
+      .chars()
+      .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-'));
   }
 
   #[test]
@@ -260,8 +262,7 @@ mod __test__ {
     let event = builder.build_fast(0, LogLevel::INFO, "test_target", "msg");
     ring.push(event).unwrap();
 
-    let writer =
-      SnapshotWriter::with_storage_path("svc", tmp.to_string_lossy().into_owned());
+    let writer = SnapshotWriter::with_storage_path("svc", tmp.to_string_lossy().into_owned());
     let mut snap = writer
       .create_snapshot(&mut ring, "../../etc/passwd\0evil", interner)
       .unwrap();
