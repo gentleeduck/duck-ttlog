@@ -25,11 +25,13 @@ pub(crate) fn bounded_lz4_decompress(buf: &[u8]) -> Result<Vec<u8>, Box<dyn Erro
   }
   let claimed = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
   if claimed > MAX_DECOMPRESSED_SIZE {
-    return Err(format!(
-      "lz4 decompressed size {} exceeds limit {}",
-      claimed, MAX_DECOMPRESSED_SIZE
-    )
-    .into());
+    return Err(
+      format!(
+        "lz4 decompressed size {} exceeds limit {}",
+        claimed, MAX_DECOMPRESSED_SIZE
+      )
+      .into(),
+    );
   }
   // Pass `None` so the library reads the prepended size itself; we have already
   // bounded the claim above.

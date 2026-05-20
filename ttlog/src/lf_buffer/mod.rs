@@ -212,8 +212,7 @@ impl<'de, T: Clone + Deserialize<'de>> Deserialize<'de> for LockFreeRingBuffer<T
 
         // Reconstruct the buffer with bounded capacity to prevent
         // attacker-controlled OOM via crafted snapshots.
-        let buffer = LockFreeRingBuffer::new_checked(capacity)
-          .map_err(serde::de::Error::custom)?;
+        let buffer = LockFreeRingBuffer::new_checked(capacity).map_err(serde::de::Error::custom)?;
         for item in items {
           buffer.push_overwrite(item);
         }
