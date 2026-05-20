@@ -163,7 +163,7 @@ impl LogEvent {
 
   #[inline]
   pub fn level(&self) -> LogLevel {
-    unsafe { std::mem::transmute(((self.packed_meta >> 8) & 0xF) as u8) }
+    LogLevel::from_u8(&(((self.packed_meta >> 8) & 0xF) as u8))
   }
 
   #[inline]
