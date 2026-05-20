@@ -209,8 +209,12 @@ impl SnapshotWriter {
     std::fs::create_dir_all(&path)?;
 
     {
-      // Snapshots may contain sensitive log data; restrict to owner-only
-      // permissions on Unix so they are not world-readable.
+      // Snapshots may contain sensitive log data.
+      //
+      // On Unix the snapshot file is created with mode 0o600 (owner
+      // read/write only). On Windows the file inherits the parent
+      // directory's ACL — callers on Windows must restrict the storage
+      // directory themselves.
       let mut opts = std::fs::OpenOptions::new();
       opts.write(true).create(true).truncate(true);
       #[cfg(unix)]
