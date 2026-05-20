@@ -61,6 +61,23 @@ pub struct Trace {
 
 pub static GLOBAL_LOGGER: OnceLock<Trace> = OnceLock::new();
 
+/// Error returned by [`Trace::try_init`] when initialization cannot complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InitError {
+  /// `Trace::init`/`try_init` was called more than once in this process.
+  AlreadyInitialized,
+}
+
+impl std::fmt::Display for InitError {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      InitError::AlreadyInitialized => write!(f, "GLOBAL_LOGGER already initialized"),
+    }
+  }
+}
+
+impl std::error::Error for InitError {}
+
 impl Trace {
   pub fn new(
     sender: Sender<Message>,
@@ -90,12 +107,38 @@ impl Trace {
     self.listener_thread = listener_thread;
   }
 
+  /// Initializes the global logger.
+  ///
+  /// On a double-init this logs a warning and returns the freshly built
+  /// `Trace` without replacing the existing global logger, rather than
+  /// panicking. Use [`Trace::try_init`] to observe the double-init as an
+  /// error instead.
   pub fn init(
     capacity: usize,
     channel_capacity: usize,
     service_name: &str,
     storage_path: Option<&str>,
   ) -> Self {
+    match Self::try_init(capacity, channel_capacity, service_name, storage_path) {
+      Ok(trace) => trace,
+      Err((trace, err)) => {
+        eprintln!("[Trace] {} — continuing without replacing global logger", err);
+        trace
+      },
+    }
+  }
+
+  /// Fallible variant of [`Trace::init`].
+  ///
+  /// On success returns the built `Trace`. On a double-init returns
+  /// `Err((trace, InitError::AlreadyInitialized))` — the `trace` is still
+  /// usable locally; it just is not registered as the global logger.
+  pub fn try_init(
+    capacity: usize,
+    channel_capacity: usize,
+    service_name: &str,
+    storage_path: Option<&str>,
+  ) -> Result<Self, (Self, InitError)> {
     let (sender, receiver) = crossbeam_channel::bounded::<Message>(channel_capacity);
     let (listener_sender, listener_receiver) = crossbeam_channel::bounded::<ListenerMessage>(16);
 
@@ -127,13 +170,14 @@ impl Trace {
       snapshot_buffer,
     );
 
-    // Set the global logger BEFORE spawning the writer thread
-    match GLOBAL_LOGGER.set(trace.clone()) {
-      Ok(_) => {
-        println!("GLOBAL_LOGGER initialized");
-      },
-      Err(_) => panic!("GLOBAL_LOGGER already initialized"),
-    };
+    // Set the global logger BEFORE spawning the writer thread.
+    // A double-init is reported to the caller instead of aborting the process.
+    let already_initialized = GLOBAL_LOGGER.set(trace.clone()).is_err();
+    if already_initialized {
+      eprintln!("[Trace] Warning: GLOBAL_LOGGER already initialized");
+    } else {
+      println!("GLOBAL_LOGGER initialized");
+    }
 
     let write_thread_handle = thread::spawn(move || {
       Self::writer_loop(
@@ -162,7 +206,11 @@ impl Trace {
     // write_thread_handle.join().unwrap();
     // listener_thread_handle.join().unwrap();
 
-    trace
+    if already_initialized {
+      Err((trace, InitError::AlreadyInitialized))
+    } else {
+      Ok(trace)
+    }
   }
 
   pub fn add_listener(

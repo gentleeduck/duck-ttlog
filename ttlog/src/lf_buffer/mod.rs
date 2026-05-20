@@ -16,15 +16,16 @@ pub struct LockFreeRingBuffer<T> {
 }
 
 impl<T> LockFreeRingBuffer<T> {
+  /// Constructs a ring buffer with a fixed `capacity`.
+  ///
+  /// # Panics
+  ///
+  /// Panics if `capacity` is `0` or exceeds [`MAX_RING_CAPACITY`]. This is a
+  /// genuine programmer-error path: every attacker-reachable caller routes
+  /// through [`LockFreeRingBuffer::new_checked`], which returns an error
+  /// instead. Internal callers pass trusted, statically valid capacities.
   pub fn new(capacity: usize) -> Self {
-    if capacity == 0 {
-      panic!("Capacity must be greater than 0");
-    }
-
-    Self {
-      queue: ArrayQueue::new(capacity),
-      capacity,
-    }
+    Self::new_checked(capacity).expect("LockFreeRingBuffer::new called with invalid capacity")
   }
 
   /// Checked constructor used by `Deserialize` and other untrusted-input paths.

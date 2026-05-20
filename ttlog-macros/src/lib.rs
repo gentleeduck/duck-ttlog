@@ -105,13 +105,21 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
               let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
               {
                 use serde::ser::{SerializeMap, Serializer};
-                let mut ser = serde_json::Serializer::new(&mut buf);
-                let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
-                #({
-                  let wrapper = ttlog::kv::IntOrSer(&#kv_values);
-                  map.serialize_entry(stringify!(#kv_keys), &wrapper).unwrap();
-                })*
-                map.end().unwrap();
+                // A failing `Serialize` impl on a user value must never panic
+                // the caller; on error we drop the kv payload silently.
+                let kv_result: Result<(), serde_json::Error> = (|| {
+                  let mut ser = serde_json::Serializer::new(&mut buf);
+                  let mut map = ser.serialize_map(Some(NUM_VALUES))?;
+                  #({
+                    let wrapper = ttlog::kv::IntOrSer(&#kv_values);
+                    map.serialize_entry(stringify!(#kv_keys), &wrapper)?;
+                  })*
+                  map.end()?;
+                  Ok(())
+                })();
+                if kv_result.is_err() {
+                  buf.0.clear();
+                }
               }
 
               let target_id = *TARGET_ID.get_or_init(|| logger.interner.intern_target(MODULE));
@@ -152,13 +160,21 @@ fn generate_log_call(level: u8, parsed: LogInput) -> TokenStream {
               let mut buf = ttlog::kv::KvTransformer::with_capacity(128);
               {
                 use serde::ser::{SerializeMap, Serializer};
-                let mut ser = serde_json::Serializer::new(&mut buf);
-                let mut map = ser.serialize_map(Some(NUM_VALUES)).unwrap();
-                #({
-                  let wrapper = ttlog::kv::IntOrSer(&#kv_values);
-                  map.serialize_entry(stringify!(#kv_keys), &wrapper).unwrap();
-                })*
-                map.end().unwrap();
+                // A failing `Serialize` impl on a user value must never panic
+                // the caller; on error we drop the kv payload silently.
+                let kv_result: Result<(), serde_json::Error> = (|| {
+                  let mut ser = serde_json::Serializer::new(&mut buf);
+                  let mut map = ser.serialize_map(Some(NUM_VALUES))?;
+                  #({
+                    let wrapper = ttlog::kv::IntOrSer(&#kv_values);
+                    map.serialize_entry(stringify!(#kv_keys), &wrapper)?;
+                  })*
+                  map.end()?;
+                  Ok(())
+                })();
+                if kv_result.is_err() {
+                  buf.0.clear();
+                }
               }
 
               let kv_id = logger.interner.intern_kv(buf.into_inner());
