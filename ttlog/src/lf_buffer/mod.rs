@@ -4,6 +4,11 @@ use crossbeam_queue::ArrayQueue;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Maximum capacity allowed when constructing a `LockFreeRingBuffer` via the
+/// fallible/`Deserialize` path. Guards against attacker-controlled snapshots
+/// that would otherwise pre-allocate an unbounded amount of memory.
+pub const MAX_RING_CAPACITY: usize = 1 << 20; // 1,048,576 entries
+
 #[derive(Debug)]
 pub struct LockFreeRingBuffer<T> {
   pub queue: ArrayQueue<T>,
@@ -20,6 +25,21 @@ impl<T> LockFreeRingBuffer<T> {
       queue: ArrayQueue::new(capacity),
       capacity,
     }
+  }
+
+  /// Checked constructor used by `Deserialize` and other untrusted-input paths.
+  /// Rejects zero and capacities exceeding [`MAX_RING_CAPACITY`].
+  pub fn new_checked(capacity: usize) -> Result<Self, &'static str> {
+    if capacity == 0 {
+      return Err("ring capacity must be > 0");
+    }
+    if capacity > MAX_RING_CAPACITY {
+      return Err("ring capacity exceeds limit");
+    }
+    Ok(Self {
+      queue: ArrayQueue::new(capacity),
+      capacity,
+    })
   }
 
   pub fn push(&self, item: T) -> Result<Option<T>, T> {
@@ -190,8 +210,10 @@ impl<'de, T: Clone + Deserialize<'de>> Deserialize<'de> for LockFreeRingBuffer<T
         let items: Vec<T> = items.ok_or_else(|| de::Error::missing_field("items"))?;
         let capacity = capacity.ok_or_else(|| de::Error::missing_field("capacity"))?;
 
-        // Reconstruct the buffer
-        let buffer = LockFreeRingBuffer::new(capacity);
+        // Reconstruct the buffer with bounded capacity to prevent
+        // attacker-controlled OOM via crafted snapshots.
+        let buffer = LockFreeRingBuffer::new_checked(capacity)
+          .map_err(serde::de::Error::custom)?;
         for item in items {
           buffer.push_overwrite(item);
         }
