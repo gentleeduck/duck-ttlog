@@ -233,7 +233,7 @@ impl Trace {
 
   pub fn get_level(&self) -> LogLevel {
     let level_u8 = self.level.load(Ordering::Relaxed);
-    unsafe { std::mem::transmute(level_u8) }
+    LogLevel::from_u8(&level_u8)
   }
 
   #[inline(always)]
@@ -255,7 +255,7 @@ impl Trace {
     let event = LogEvent {
       packed_meta: LogEvent::pack_meta(
         timestamp,
-        unsafe { std::mem::transmute::<u8, LogLevel>(log_level) },
+        LogLevel::from_u8(&(log_level & 0x07)),
         thread_id,
       ),
       target_id,
