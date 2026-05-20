@@ -6,11 +6,31 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fs::{self, File};
 use std::io::Write;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::event::{LogEvent, LogLevel};
 use crate::lf_buffer::LockFreeRingBuffer as RingBuffer;
 use crate::string_interner::StringInterner;
+
+/// Sanitises a snapshot `reason` for safe use as a filename component.
+///
+/// - Keeps only ASCII alphanumerics, `_`, and `-`.
+/// - Drops every other character (notably `/`, `\`, `.`, NUL, control bytes).
+/// - Truncates to 64 characters.
+/// - Returns `"unknown"` when the result would otherwise be empty.
+pub(crate) fn sanitize_reason(reason: &str) -> String {
+  let cleaned: String = reason
+    .chars()
+    .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+    .take(64)
+    .collect();
+  if cleaned.is_empty() {
+    "unknown".to_string()
+  } else {
+    cleaned
+  }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SnapShot {
@@ -156,11 +176,14 @@ impl SnapshotWriter {
       self.storage_path.to_string()
     };
 
-    // Build filename and write atomically
-    let filename = format!(
-      "{}/ttlog-{}-{}-{}.bin",
-      path, snapshot.pid, snapshot.created_at, snapshot.reason
-    );
+    // Build filename and write atomically. The `reason` is sanitised to a
+    // restricted alphabet to prevent path-traversal via `../`, NUL bytes, or
+    // separators that could escape `storage_path`.
+    let safe_reason = sanitize_reason(&snapshot.reason);
+    let filename = Path::new(&path).join(format!(
+      "ttlog-{}-{}-{}.bin",
+      snapshot.pid, snapshot.created_at, safe_reason
+    ));
 
     // Ensure directory exists
     std::fs::create_dir_all(&path)?;
@@ -175,7 +198,7 @@ impl SnapshotWriter {
     eprintln!(
       "[Snapshot] Saved {} events to {}",
       snapshot.events.len(),
-      filename
+      filename.display()
     );
     Ok(())
   }
