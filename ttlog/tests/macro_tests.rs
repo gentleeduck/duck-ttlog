@@ -372,6 +372,47 @@ fn macro_timestamp_is_recent() {
   assert!(ts <= after, "timestamp {} should be <= after {}", ts, after);
 }
 
+// ── SEC-022: one failing kv field does not drop the others ──────
+
+/// A value whose `Serialize` impl always returns an error, simulating a
+/// user type with a buggy/fallible serializer.
+struct BadSerialize;
+
+impl serde::Serialize for BadSerialize {
+  fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: serde::Serializer,
+  {
+    Err(serde::ser::Error::custom("intentional serialize failure"))
+  }
+}
+
+#[test]
+fn macro_kv_failing_field_drops_only_that_field() {
+  let _lock = lock_tests();
+  let logger = ensure_global_logger();
+  logger.level.store(LogLevel::TRACE as u8, Ordering::Relaxed);
+  logger.snapshot_buffer.take_snapshot();
+
+  let good = "still here";
+  let bad = BadSerialize;
+  info!("kv_partial_failure", good = good, bad = bad);
+
+  let events = collect_events_with_message(logger, "kv_partial_failure");
+  assert_eq!(events.len(), 1);
+
+  let kv_bytes = logger
+    .interner
+    .get_kv(events[0].kv_id.unwrap().get())
+    .unwrap();
+  let kv: serde_json::Value = serde_json::from_slice(&kv_bytes).unwrap();
+
+  // The good field survives the bad field's serialization failure.
+  assert_eq!(kv["good"], serde_json::json!("still here"));
+  // The bad field is preserved as a placeholder, not dropped entirely.
+  assert_eq!(kv["bad"], serde_json::json!("<serialize-error>"));
+}
+
 // ── String KV values ────────────────────────────────────────────
 
 #[test]
