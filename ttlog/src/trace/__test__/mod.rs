@@ -83,4 +83,44 @@ mod __test__ {
 
     first.shutdown();
   }
+
+  /// SEC-021: a double-init must spawn ZERO extra threads. Prior to the fix
+  /// `try_init` spawned the writer + listener threads before checking the
+  /// global slot, leaking two threads per redundant call.
+  #[test]
+  #[cfg(target_os = "linux")]
+  fn double_init_spawns_no_extra_threads() {
+    fn task_count() -> usize {
+      std::fs::read_dir("/proc/self/task")
+        .map(|d| d.count())
+        .unwrap_or(0)
+    }
+
+    // First init claims the global slot (may legitimately spawn threads if
+    // this test wins the race for the process-wide GLOBAL_LOGGER).
+    let _ = Trace::try_init(64, 8, "sec021_thread_probe", Some("./tmp/"));
+
+    // Let any threads spawned by the first init settle.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let before = task_count();
+
+    // Redundant inits: every one of these must hit the early-return path.
+    for _ in 0..8 {
+      let result = Trace::try_init(64, 8, "sec021_thread_probe", Some("./tmp/"));
+      assert!(
+        result.is_err(),
+        "redundant try_init must report AlreadyInitialized"
+      );
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let after = task_count();
+
+    assert!(
+      after <= before,
+      "double-init leaked threads: {} -> {} after 8 redundant inits",
+      before,
+      after
+    );
+  }
 }

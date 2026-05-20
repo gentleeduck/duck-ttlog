@@ -142,6 +142,16 @@ impl Trace {
     service_name: &str,
     storage_path: Option<&str>,
   ) -> Result<Self, (Self, InitError)> {
+    // SEC-021: gate on the global init state BEFORE spawning any thread.
+    // A double-init must not leak the writer + listener threads or their
+    // channels. The cheap `get()` short-circuits the common redundant-call
+    // case; the authoritative claim is the `OnceLock::set` below, which
+    // closes the TOCTOU between this check and the actual claim.
+    if let Some(existing) = GLOBAL_LOGGER.get() {
+      eprintln!("[Trace] Warning: GLOBAL_LOGGER already initialized");
+      return Err((existing.clone(), InitError::AlreadyInitialized));
+    }
+
     let (sender, receiver) = crossbeam_channel::bounded::<Message>(channel_capacity);
     let (listener_sender, listener_receiver) = crossbeam_channel::bounded::<ListenerMessage>(16);
 
@@ -154,9 +164,6 @@ impl Trace {
     let snapshot_buffer = Arc::new(LockFreeRingBuffer::new(capacity));
     let snapshot_buffer_clone = Arc::clone(&snapshot_buffer);
     let interner_clone = Arc::clone(&interner);
-
-    // Install panic hook before spawning writer thread
-    PanicHook::install(sender.clone());
 
     let service_name = service_name.to_string();
     let storage_path: String = match storage_path {
@@ -173,14 +180,20 @@ impl Trace {
       snapshot_buffer,
     );
 
-    // Set the global logger BEFORE spawning the writer thread.
-    // A double-init is reported to the caller instead of aborting the process.
-    let already_initialized = GLOBAL_LOGGER.set(trace.clone()).is_err();
-    if already_initialized {
+    // Authoritatively claim the global slot. If another thread won the race
+    // between the `get()` above and here, `set` returns Err — we bail out
+    // WITHOUT spawning any thread or installing the panic hook.
+    if GLOBAL_LOGGER.set(trace.clone()).is_err() {
       eprintln!("[Trace] Warning: GLOBAL_LOGGER already initialized");
-    } else {
-      println!("GLOBAL_LOGGER initialized");
+      let existing = GLOBAL_LOGGER.get().cloned().unwrap_or(trace);
+      return Err((existing, InitError::AlreadyInitialized));
     }
+
+    println!("GLOBAL_LOGGER initialized");
+
+    // Claim succeeded — only now do we spawn background threads and install
+    // the panic hook, so a redundant call can never leak them.
+    PanicHook::install(trace.sender.clone());
 
     let write_thread_handle = thread::spawn(move || {
       Self::writer_loop(
@@ -205,15 +218,7 @@ impl Trace {
 
     trace.set_handler(Some(write_thread_handle), Some(listener_thread_handle));
 
-    // Wait for writer and listener threads to start
-    // write_thread_handle.join().unwrap();
-    // listener_thread_handle.join().unwrap();
-
-    if already_initialized {
-      Err((trace, InitError::AlreadyInitialized))
-    } else {
-      Ok(trace)
-    }
+    Ok(trace)
   }
 
   pub fn add_listener(
