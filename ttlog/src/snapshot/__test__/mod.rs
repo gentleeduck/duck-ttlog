@@ -310,7 +310,10 @@ mod __test__ {
       .push(builder.build_fast(0, LogLevel::INFO, "t", "m"))
       .unwrap();
     let snap = writer.create_snapshot(&mut ring, "r", interner).unwrap();
-    assert!(!snap.hostname.is_empty(), "hostname must appear when opted in");
+    assert!(
+      !snap.hostname.is_empty(),
+      "hostname must appear when opted in"
+    );
   }
 
   #[cfg(unix)]

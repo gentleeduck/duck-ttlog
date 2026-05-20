@@ -122,7 +122,10 @@ impl Trace {
     match Self::try_init(capacity, channel_capacity, service_name, storage_path) {
       Ok(trace) => trace,
       Err((trace, err)) => {
-        eprintln!("[Trace] {} — continuing without replacing global logger", err);
+        eprintln!(
+          "[Trace] {} — continuing without replacing global logger",
+          err
+        );
         trace
       },
     }
