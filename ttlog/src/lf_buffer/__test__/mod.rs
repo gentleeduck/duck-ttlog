@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod __test__ {
 
-  use crate::lf_buffer::LockFreeRingBuffer;
+  use crate::lf_buffer::{LockFreeRingBuffer, MAX_RING_CAPACITY};
 
   use std::sync::Arc;
   use std::thread;
@@ -333,6 +333,43 @@ mod __test__ {
 
     let items = buffer.take_snapshot();
     assert_eq!(items, vec!["hello", "world", "rust"]);
+  }
+
+  #[test]
+  fn test_deserialize_rejects_zero_capacity() {
+    // Hand-crafted JSON with capacity = 0 must be refused, not panic.
+    let payload = r#"{"items":[],"capacity":0}"#;
+    let res: Result<LockFreeRingBuffer<i32>, _> = serde_json::from_str(payload);
+    assert!(res.is_err(), "expected error for capacity=0");
+  }
+
+  #[test]
+  fn test_deserialize_rejects_huge_capacity() {
+    // u32::MAX would historically OOM via pre-allocation.
+    let payload = format!(r#"{{"items":[],"capacity":{}}}"#, u32::MAX);
+    let res: Result<LockFreeRingBuffer<i32>, _> = serde_json::from_str(&payload);
+    assert!(res.is_err(), "expected error for u32::MAX capacity");
+  }
+
+  #[test]
+  fn test_deserialize_accepts_max_capacity() {
+    let payload = format!(r#"{{"items":[],"capacity":{}}}"#, MAX_RING_CAPACITY);
+    let res: Result<LockFreeRingBuffer<i32>, _> = serde_json::from_str(&payload);
+    assert!(res.is_ok(), "expected ok at MAX_RING_CAPACITY");
+    assert_eq!(res.unwrap().capacity(), MAX_RING_CAPACITY);
+  }
+
+  #[test]
+  fn test_deserialize_round_trip_happy_path() {
+    let buffer = LockFreeRingBuffer::<i32>::new(4);
+    buffer.push_overwrite(10);
+    buffer.push_overwrite(20);
+    buffer.push_overwrite(30);
+
+    let serialized = serde_json::to_string(&buffer).unwrap();
+    let deserialized: LockFreeRingBuffer<i32> = serde_json::from_str(&serialized).unwrap();
+    assert_eq!(deserialized.capacity(), 4);
+    assert_eq!(deserialized.take_snapshot(), vec![10, 20, 30]);
   }
 
   #[test]
