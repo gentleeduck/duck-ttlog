@@ -38,7 +38,8 @@ mod __test__ {
 
   #[test]
   fn test_create_snapshot_with_events() {
-    let writer = SnapshotWriter::new("test_service");
+    // Opt in to hostname so the legacy assertion below still holds.
+    let writer = SnapshotWriter::new("test_service").with_hostname(true);
     let (mut ring, interner, builder) = builder_with_ring(10);
 
     let event1 = builder.build_fast(1000, LogLevel::INFO, "module1", "message1");
@@ -285,6 +286,61 @@ mod __test__ {
     assert!(!name.contains('\0'));
 
     // cleanup
+    let _ = std::fs::remove_dir_all(&tmp);
+  }
+
+  // --- SEC-007: snapshot file perms + opt-in hostname ---
+
+  #[test]
+  fn test_hostname_omitted_by_default() {
+    let writer = SnapshotWriter::new("svc");
+    let (mut ring, interner, builder) = builder_with_ring(4);
+    ring
+      .push(builder.build_fast(0, LogLevel::INFO, "t", "m"))
+      .unwrap();
+    let snap = writer.create_snapshot(&mut ring, "r", interner).unwrap();
+    assert!(snap.hostname.is_empty(), "hostname must be opt-in");
+  }
+
+  #[test]
+  fn test_hostname_included_when_opted_in() {
+    let writer = SnapshotWriter::new("svc").with_hostname(true);
+    let (mut ring, interner, builder) = builder_with_ring(4);
+    ring
+      .push(builder.build_fast(0, LogLevel::INFO, "t", "m"))
+      .unwrap();
+    let snap = writer.create_snapshot(&mut ring, "r", interner).unwrap();
+    assert!(!snap.hostname.is_empty(), "hostname must appear when opted in");
+  }
+
+  #[cfg(unix)]
+  #[test]
+  fn test_written_snapshot_is_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = std::env::temp_dir().join(format!(
+      "ttlog_sec007_{}_{}",
+      std::process::id(),
+      chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    let (mut ring, interner, builder) = builder_with_ring(4);
+    ring
+      .push(builder.build_fast(0, LogLevel::INFO, "t", "m"))
+      .unwrap();
+    let writer = SnapshotWriter::with_storage_path("svc", tmp.to_string_lossy().into_owned());
+    let snap = writer.create_snapshot(&mut ring, "perm", interner).unwrap();
+    writer.write_snapshot(&snap).unwrap();
+
+    let bin = std::fs::read_dir(&tmp)
+      .unwrap()
+      .filter_map(|e| e.ok().map(|e| e.path()))
+      .find(|p| p.extension().and_then(|s| s.to_str()) == Some("bin"))
+      .expect("a .bin snapshot file");
+    let mode = std::fs::metadata(&bin).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600, "snapshot must be owner-only");
+
     let _ = std::fs::remove_dir_all(&tmp);
   }
 }
