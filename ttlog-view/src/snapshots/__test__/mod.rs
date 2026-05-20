@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod __test__ {
-  use crate::snapshots::{bounded_lz4_decompress, MAX_DECOMPRESSED_SIZE};
+  use crate::snapshots::bounded_lz4_decompress;
+  use ttlog::snapshot::decompress::MAX_DECOMPRESSED_SIZE;
 
   /// Craft a 1 GB-claimed payload: the lz4 size prefix is little-endian u32.
   /// We don't need a valid lz4 body — the bound check must trip first.

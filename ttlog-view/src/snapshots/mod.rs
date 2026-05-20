@@ -1,13 +1,12 @@
 mod __test__;
 
-use lz4::block::decompress;
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs};
 use ttlog::snapshot::SnapShot;
 
-/// Hard upper bound on a decompressed snapshot payload. Anything larger is
-/// treated as a decompression bomb and rejected before allocation.
-pub const MAX_DECOMPRESSED_SIZE: usize = 256 * 1024 * 1024; // 256 MB
+// Bounded LZ4 decompression now lives in the `ttlog` crate so every snapshot
+// read-back path (ttlog-view, ttlog-filereader) shares the same bomb guard.
+use ttlog::snapshot::decompress::bounded_lz4_decompress;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnapshotFile {
@@ -15,27 +14,6 @@ pub struct SnapshotFile {
   pub path: String,
   pub create_at: String,
   pub data: SnapShot,
-}
-
-/// Reads the little-endian u32 size prefix that `lz4::block::compress(.., true)`
-/// writes and refuses payloads claiming to expand beyond `MAX_DECOMPRESSED_SIZE`.
-pub(crate) fn bounded_lz4_decompress(buf: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
-  if buf.len() < 4 {
-    return Err("lz4 payload missing size prefix".into());
-  }
-  let claimed = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-  if claimed > MAX_DECOMPRESSED_SIZE {
-    return Err(
-      format!(
-        "lz4 decompressed size {} exceeds limit {}",
-        claimed, MAX_DECOMPRESSED_SIZE
-      )
-      .into(),
-    );
-  }
-  // Pass `None` so the library reads the prepended size itself; we have already
-  // bounded the claim above.
-  Ok(decompress(buf, None)?)
 }
 
 pub struct Snapshots;
