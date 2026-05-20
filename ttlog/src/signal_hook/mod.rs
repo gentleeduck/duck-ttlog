@@ -19,7 +19,12 @@ impl SignalHook {
       SIGINT, SIGTERM, SIGQUIT, SIGHUP, SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGPIPE, SIGCHLD,
     ]) {
       Ok(s) => s,
-      Err(e) => panic!("Failed to install signal handler: {}", e),
+      Err(e) => {
+        // The host application must not die just because the logger could
+        // not grab signal handlers. Log and return without installing.
+        eprintln!("[SignalHook] Failed to install signal handler: {}", e);
+        return;
+      },
     };
 
     thread::spawn(move || {

@@ -398,4 +398,12 @@ mod __test__ {
     assert_eq!(buffer.pop(), Some(item2));
     assert_eq!(buffer.pop(), None);
   }
+
+  #[test]
+  fn new_checked_rejects_invalid_capacity_without_panic() {
+    // The attacker-reachable constructor never panics.
+    assert!(LockFreeRingBuffer::<u8>::new_checked(0).is_err());
+    assert!(LockFreeRingBuffer::<u8>::new_checked(MAX_RING_CAPACITY + 1).is_err());
+    assert!(LockFreeRingBuffer::<u8>::new_checked(8).is_ok());
+  }
 }

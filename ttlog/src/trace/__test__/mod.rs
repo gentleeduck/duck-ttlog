@@ -57,4 +57,30 @@ mod __test__ {
     let d2 = format!("{}", Message::FlushAndExit);
     assert_eq!(d2, "FlushAndExit");
   }
+
+  #[test]
+  fn double_init_returns_err_without_panic() {
+    use crate::trace::InitError;
+
+    // First init succeeds and registers the global logger.
+    let mut first = match Trace::try_init(64, 8, "double_init_test", Some("./tmp/")) {
+      Ok(trace) => trace,
+      Err(_) => panic!("first init should succeed"),
+    };
+
+    // Second init must NOT panic — it reports the double-init as an error.
+    match Trace::try_init(64, 8, "double_init_test", Some("./tmp/")) {
+      Ok(_) => panic!("second init unexpectedly succeeded"),
+      Err((mut trace, err)) => {
+        assert_eq!(err, InitError::AlreadyInitialized);
+        trace.shutdown();
+      },
+    }
+
+    // The infallible wrapper also must not panic on double-init.
+    let mut third = Trace::init(64, 8, "double_init_test", Some("./tmp/"));
+    third.shutdown();
+
+    first.shutdown();
+  }
 }
