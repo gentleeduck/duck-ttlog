@@ -10,7 +10,7 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-itoa = "1.0.15"
+itoa = "1.0.18"
 proc-macro2.workspace = true
 quote.workspace = true
 ryu = "1.0.20"
