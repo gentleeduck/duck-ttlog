@@ -1,29 +1,18 @@
-// mod example_basic_logging;
-// mod example_custom_service;
-// mod example_error_scenarios;
-// mod example_high_volume_logging;
-// mod example_multithreaded_logging;
-// mod example_panic_handling;
-// mod example_structured_logging;
-mod example_simple;
+mod csv;
+
+const SAMPLE: &str = "\
+id,note,tail
+1,\"hello, world\",a
+2,\"line
+break\",b
+
+3,\"say \"\"hi\"\"\",c
+4,ragged
+";
 
 fn main() {
-  println!("TTLog Library Examples");
-  println!("=====================");
-
-  // Run all examples
-  example_simple::example_simple();
-  // example_basic_logging();
-  // example_structured_logging();
-  // example_high_volume_logging();
-  // example_multithreaded_logging();
-  // example_panic_handling();
-  // example_custom_service();
-  // example_error_scenarios();
-  //
-  // println!("\n=== All Examples Completed ===");
-  // println!("Check /tmp/ directory for generated snapshot files:");
-  // println!("  ls -la /tmp/ttlog-*.bin");
-  // println!("\nTo decompress and view a snapshot file:");
-  // println!("  # This would require a separate utility to decompress LZ4 and decode CBOR");
+  let parsed = csv::parse(SAMPLE, 4);
+  println!("{:?}", parsed.headers);
+  println!("{:?}", parsed.end_buffer);
+  println!("chunks: {}", parsed.chunks);
 }

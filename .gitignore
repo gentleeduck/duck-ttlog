@@ -5,3 +5,4 @@ wildduck-template.json
 benchmark_reports
 tmp
 audit/
+.idea/
