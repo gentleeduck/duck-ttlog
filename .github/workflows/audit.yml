@@ -27,7 +27,7 @@ jobs:
       matrix:
         checks: [advisories, bans, licenses, sources]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
