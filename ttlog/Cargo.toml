@@ -23,7 +23,7 @@ crossbeam-channel.workspace = true
 crossbeam-queue = { workspace = true }
 ttlog-macros = { path = "../ttlog-macros", version = "0.1.21" }
 ryu = "1.0.20"
-itoa = "1.0.15"
+itoa = "1.0.18"
 tracing = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
