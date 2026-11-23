@@ -13,10 +13,7 @@ yanked = "warn"
 #   the parse path.
 # - yaml-rust 0.4.5: used by syntect for sublime-syntax YAML loading at
 #   build time, no user-controlled YAML at runtime.
-ignore = [
-  "RUSTSEC-2025-0141", # bincode unmaintained
-  "RUSTSEC-2024-0320", # yaml-rust unmaintained
-]
+ignore = []
 
 [licenses]
 allow = [
